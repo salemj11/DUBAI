@@ -17,9 +17,11 @@ import TimelineScreen from "./screens/TimelineScreen.jsx";
 import "./App.css";
 
 export default function App() {
-  const { room: roomState, updateRoom, loading } = useRoom();
+  const { room: roomState, lobby, updateRoom, loading, joinLobby, leaveLobby, resetLobby } = useRoom();
   const [me, setMe] = useState(null);
   const [nameInput, setNameInput] = useState("");
+  const [pinInput, setPinInput] = useState("");
+  const [joinError, setJoinError] = useState("");
   const [testMode, setTestMode] = useState(false);
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
@@ -37,6 +39,17 @@ export default function App() {
   const [overlay, setOverlay] = useState(null); // null | "roulette" | "timeline"
 
   const room = roomState || newRoom();
+
+  // ── Handle lobby reset events (kicked back to login) ──
+  useEffect(() => {
+    if (lobby.wasReset && me) {
+      setMe(null); setNameInput(""); setPinInput(""); setJoinError("");
+      setTestMode(false); setSelectedCat(null);
+      setSubcatCards([]); setSubcatRight([]); setSubcatDone(false);
+      setPlaceCards([]); setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
+      setFinalSel([]); setSubmitted(false); setOverlay(null);
+    }
+  }, [lobby.wasReset, lobby.resetVersion]);
 
   // ── Timer for final vote ──────────────────────────────
   useEffect(() => {
@@ -100,12 +113,23 @@ export default function App() {
 
   // ── Join / lobby handlers ─────────────────────────────
   const handleJoin = async () => {
-    const name = nameInput.trim(); if (!name) return;
-    await update((r) => {
-      if (r.players.length >= MAX_PLAYERS || r.players.includes(name)) return r;
-      r.players.push(name); return { ...r };
-    });
-    setMe(name);
+    const name = nameInput.trim();
+    const pin = pinInput.trim();
+    if (!name || !/^\d{3}$/.test(pin)) return;
+    setJoinError("");
+
+    try {
+      // 1. Join the presence lobby (validates PIN, name uniqueness, room capacity)
+      await joinLobby({ name, pin });
+      // 2. Also add to room.players for game state
+      await update((r) => {
+        if (r.players.length >= MAX_PLAYERS || r.players.includes(name)) return r;
+        r.players.push(name); return { ...r };
+      });
+      setMe(name);
+    } catch (err) {
+      setJoinError(err.message || "Could not join — try again.");
+    }
   };
 
   const fillTestPlayers = async () => {
@@ -268,8 +292,10 @@ export default function App() {
 
   // ── Reset ─────────────────────────────────────────────
   const handleReset = async () => {
+    try { await resetLobby(); } catch (e) { console.warn("Lobby reset failed:", e); }
     await update(() => newRoom());
-    setMe(null); setNameInput(""); setTestMode(false); setSelectedCat(null);
+    setMe(null); setNameInput(""); setPinInput(""); setJoinError("");
+    setTestMode(false); setSelectedCat(null);
     setSubcatCards([]); setSubcatRight([]); setSubcatDone(false);
     setPlaceCards([]); setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
     setFinalSel([]); setSubmitted(false); setOverlay(null);
@@ -285,9 +311,9 @@ export default function App() {
   if (overlay === "timeline") return <TimelineScreen room={room} onBack={() => setOverlay(null)} />;
 
   // ── Phase router ──────────────────────────────────────
-  if (!me) return <JoinScreen room={room} nameInput={nameInput} setNameInput={setNameInput} handleJoin={handleJoin} />;
+  if (!me) return <JoinScreen lobby={lobby} nameInput={nameInput} setNameInput={setNameInput} pinInput={pinInput} setPinInput={setPinInput} handleJoin={handleJoin} error={joinError} />;
 
-  if (room.phase === "lobby") return <LobbyScreen room={room} me={me} testMode={testMode} isHost={isHost} fillTestPlayers={fillTestPlayers} handleStart={handleStart} />;
+  if (room.phase === "lobby") return <LobbyScreen room={room} lobby={lobby} me={me} testMode={testMode} isHost={isHost} fillTestPlayers={fillTestPlayers} handleStart={handleStart} />;
 
   if (room.phase === "category_vote" && !room.categoryShowResults) return <CategoryVoteScreen room={room} me={me} testMode={testMode} isHost={isHost} selectedCat={selectedCat} setSelectedCat={setSelectedCat} handleCatVote={handleCatVote} handleCatReveal={handleCatReveal} />;
 
