@@ -98,18 +98,19 @@ function getStoredTestPlayers(room) {
   return room.testPlayers.filter((name) => typeof name === "string");
 }
 
-function getLobbyDisplayPlayers(room, lobbyPlayers) {
-  const actualPlayers = lobbyPlayers.map((player) => player.name);
+function uniqueNames(names) {
+  return Array.from(new Set(names.filter((name) => typeof name === "string" && name.trim())));
+}
 
-  if (actualPlayers.length === 0) {
-    return [];
-  }
+function getLobbyDisplayPlayers(room, lobbyPlayers, me) {
+  const actualPlayers = uniqueNames(lobbyPlayers.map((player) => player.name));
+  const basePlayers = actualPlayers.length > 0 ? actualPlayers : uniqueNames([me]);
 
   const syntheticPlayers = getStoredTestPlayers(room)
-    .filter((name) => !actualPlayers.includes(name))
-    .slice(0, MAX_PLAYERS - actualPlayers.length);
+    .filter((name) => !basePlayers.includes(name))
+    .slice(0, Math.max(0, MAX_PLAYERS - basePlayers.length));
 
-  return [...actualPlayers, ...syntheticPlayers].slice(0, MAX_PLAYERS);
+  return [...basePlayers, ...syntheticPlayers].slice(0, MAX_PLAYERS);
 }
 
 function getAutomatedPlayers(room, me) {
@@ -255,7 +256,7 @@ export default function App() {
 
   const room = roomState || newRoom();
   const testMode = room.isTestMode === true;
-  const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players);
+  const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
 
   const resetLocalUi = useCallback(() => {
@@ -376,7 +377,10 @@ export default function App() {
 
   const fillTestPlayers = async () => {
     await update((r) => {
-      const actualPlayers = lobby.players.map((player) => player.name);
+      const actualPlayers = uniqueNames([
+        ...lobby.players.map((player) => player.name),
+        me,
+      ]);
       const syntheticPlayers = TEST_NAMES
         .filter((name) => !actualPlayers.includes(name))
         .slice(0, Math.max(0, MAX_PLAYERS - actualPlayers.length));
