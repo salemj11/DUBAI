@@ -1,7 +1,20 @@
 import { useEffect, useState, useCallback } from 'react'
-import { supabase } from '../supabase.js'
+import {
+  joinRoom as joinLobby,
+  leaveRoom as leaveLobby,
+  resetRoom as resetLobby,
+  subscribeToLobby,
+} from '../backend/presence.js'
+import { ensureAnonymousSupabaseSession, supabase } from '../supabase.js'
 
 const ROOM_ID = 'main'
+
+const EMPTY_LOBBY = {
+  players: [],
+  currentCount: 0,
+  resetVersion: 0,
+  wasReset: false,
+}
 
 function newRoom() {
   return {
@@ -21,55 +34,105 @@ function validState(state) {
 
 export function useRoom() {
   const [room, setRoom] = useState(null)
+  const [lobby, setLobby] = useState(EMPTY_LOBBY)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Initial fetch
-    supabase
-      .from('rooms')
-      .select('state')
-      .eq('id', ROOM_ID)
-      .single()
-      .then(({ data }) => {
-        setRoom(validState(data?.state) ? data.state : newRoom())
-        setLoading(false)
-      })
+    let isMounted = true
+    const unsubscribeLobby = subscribeToLobby((snapshot) => {
+      if (isMounted) setLobby(snapshot)
+    })
+    let channel = null
 
-    // Realtime subscription
-    const channel = supabase
-      .channel('rooms:main')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${ROOM_ID}` },
-        (payload) => {
-          const s = payload.new?.state
-          setRoom(validState(s) ? s : newRoom())
+    async function boot() {
+      try {
+        await ensureAnonymousSupabaseSession()
+
+        const { data, error } = await supabase
+          .from('rooms')
+          .select('state')
+          .eq('id', ROOM_ID)
+          .maybeSingle()
+
+        if (error) throw error
+
+        const initialState = validState(data?.state) ? data.state : newRoom()
+
+        const { error: upsertError } = await supabase
+          .from('rooms')
+          .upsert({ id: ROOM_ID, state: initialState }, { onConflict: 'id' })
+
+        if (upsertError) throw upsertError
+
+        if (isMounted) {
+          setRoom(initialState)
+          setLoading(false)
         }
-      )
-      .subscribe()
+
+        channel = supabase
+          .channel('rooms:main')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${ROOM_ID}` },
+            (payload) => {
+              const state = payload.new?.state
+
+              if (isMounted) {
+                setRoom(validState(state) ? state : newRoom())
+              }
+            }
+          )
+          .subscribe()
+      } catch (error) {
+        console.error('Failed to load room state.', error)
+
+        if (isMounted) {
+          setRoom(newRoom())
+          setLoading(false)
+        }
+      }
+    }
+
+    void boot()
 
     return () => {
-      supabase.removeChannel(channel)
+      isMounted = false
+      unsubscribeLobby()
+
+      if (channel) {
+        void supabase.removeChannel(channel)
+      }
     }
   }, [])
 
   const updateRoom = useCallback(async (fn) => {
-    // Read latest state from DB to avoid race conditions
-    const { data } = await supabase
+    await ensureAnonymousSupabaseSession()
+
+    const { data, error } = await supabase
       .from('rooms')
       .select('state')
       .eq('id', ROOM_ID)
-      .single()
+      .maybeSingle()
+
+    if (error) throw error
 
     const current = validState(data?.state) ? data.state : newRoom()
     const nextState = fn(current)
 
     const { error: upsertError } = await supabase
       .from('rooms')
-      .upsert({ id: ROOM_ID, state: nextState })
+      .upsert({ id: ROOM_ID, state: nextState }, { onConflict: 'id' })
 
     if (upsertError) throw upsertError
   }, [])
 
-  return { room, loading, updateRoom }
+  return {
+    room,
+    lobby,
+    loading,
+    updateRoom,
+    joinLobby,
+    leaveLobby,
+    resetLobby,
+  }
 }

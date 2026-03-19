@@ -208,9 +208,11 @@ function SwipeStack({ cards, onSwipe, swipesLeft, maxSwipes, renderCard }) {
 }
 
 export default function App() {
-  const { room: roomState, updateRoom, loading } = useRoom();
+  const { room: roomState, lobby, updateRoom, loading, joinLobby, leaveLobby, resetLobby } = useRoom();
   const [me, setMe] = useState(null);
   const [nameInput, setNameInput] = useState("");
+  const [pinInput, setPinInput] = useState("");
+  const [joinError, setJoinError] = useState("");
   const [testMode, setTestMode] = useState(false);
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
@@ -226,16 +228,45 @@ export default function App() {
   const timerRef = useRef(null);
 
   const room = roomState || newRoom();
+  const liveLobbyPlayers = (testMode && room.phase === "lobby" && room.players.length > lobby.players.length)
+    ? room.players
+    : lobby.players.map((player) => player.name);
+  const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
+
+  const resetLocalUi = useCallback(() => {
+    clearInterval(timerRef.current);
+    setMe(null);
+    setNameInput("");
+    setPinInput("");
+    setJoinError("");
+    setTestMode(false);
+    setSelectedCat(null);
+    setSubcatCards([]);
+    setSubcatRight([]);
+    setSubcatDone(false);
+    setPlaceCards([]);
+    setPlaceRight([]);
+    setPlaceSwipesLeft(MAX_PLACE_SWIPES);
+    setPlaceDone(false);
+    setFinalSel([]);
+    setTimerLeft(FINAL_VOTE_SECONDS);
+    setSubmitted(false);
+  }, []);
 
   useEffect(() => {
-    if (room?.phase !== "final_vote" || !room?.finalVoteEndTime) return;
-    timerRef.current = setInterval(() => {
-      const left = Math.max(0, Math.ceil((room.finalVoteEndTime - Date.now()) / 1000));
-      setTimerLeft(left);
-      if (left <= 0) { clearInterval(timerRef.current); if (!submitted) doFinalSubmit(); }
-    }, 200);
-    return () => clearInterval(timerRef.current);
-  }, [room?.phase, room?.finalVoteEndTime, submitted]);
+    if (!lobby.wasReset) return;
+    const timeoutId = window.setTimeout(() => {
+      resetLocalUi();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [lobby.wasReset, lobby.resetVersion, resetLocalUi]);
+
+  useEffect(() => {
+    return () => {
+      void leaveLobby();
+    };
+  }, [leaveLobby]);
 
   const update = useCallback(async (fn) => {
     await updateRoom((current) => {
@@ -284,21 +315,55 @@ export default function App() {
     }
   };
 
+  async function doFinalSubmit() {
+    if (submitted) return;
+    setSubmitted(true);
+    await update((r) => { r.finalVotes[me] = finalSel; return { ...r }; });
+    if (testMode) setTimeout(() => simulateTestVotes("final"), 600);
+  }
+
+  useEffect(() => {
+    if (room?.phase !== "final_vote" || !room?.finalVoteEndTime) return;
+    timerRef.current = setInterval(() => {
+      const left = Math.max(0, Math.ceil((room.finalVoteEndTime - Date.now()) / 1000));
+      setTimerLeft(left);
+      if (left <= 0) { clearInterval(timerRef.current); if (!submitted) doFinalSubmit(); }
+    }, 200);
+    return () => clearInterval(timerRef.current);
+  }, [room?.phase, room?.finalVoteEndTime, submitted]);
+
   const handleJoin = async () => {
-    const name = nameInput.trim(); if (!name) return;
-    await update((r) => {
-      if (r.players.length >= MAX_PLAYERS || r.players.includes(name)) return r;
-      r.players.push(name); return { ...r };
-    });
-    setMe(name);
+    const name = nameInput.trim();
+    const pin = pinInput.trim();
+    if (!name || !pin) return;
+
+    try {
+      setJoinError("");
+      await joinLobby({ name, pin });
+      setMe(name);
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : "Unable to join room.");
+    }
   };
 
   const fillTestPlayers = async () => {
     setTestMode(true);
-    await update((r) => { TEST_NAMES.forEach((n) => { if (!r.players.includes(n) && r.players.length < MAX_PLAYERS) r.players.push(n); }); return { ...r }; });
+    await update((r) => {
+      const seededPlayers = [...new Set([...lobby.players.map((player) => player.name), ...TEST_NAMES])].slice(0, MAX_PLAYERS);
+      return { ...r, players: seededPlayers };
+    });
   };
 
-  const handleStart = async () => { await update((r) => ({ ...r, phase: "category_vote", categoryVotes: {}, categoryShowResults: false })); };
+  const handleStart = async () => {
+    if (displayPlayers.length !== MAX_PLAYERS) return;
+    await update((r) => ({
+      ...r,
+      players: displayPlayers,
+      phase: "category_vote",
+      categoryVotes: {},
+      categoryShowResults: false,
+    }));
+  };
 
   const handleCatVote = async () => {
     if (!selectedCat) return;
@@ -307,6 +372,13 @@ export default function App() {
   };
 
   const handleCatReveal = async () => { await update((r) => ({ ...r, categoryShowResults: true })); };
+
+  function initPlaceCards(cat, rightSubcats) {
+    let filtered = ALL_PLACES.filter((p) => p.cat === cat);
+    if (rightSubcats && rightSubcats.length > 0) filtered = filtered.filter((p) => p.tags.length === 0 || p.tags.some((t) => rightSubcats.includes(t)));
+    setPlaceCards(filtered.sort(() => Math.random() - 0.5));
+    setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
+  }
 
   const handleCatProceed = async () => {
     const r = room;
@@ -371,13 +443,6 @@ export default function App() {
     }
   }, [room?.subcatSwipes, room?.phase]);
 
-  const initPlaceCards = (cat, rightSubcats) => {
-    let filtered = ALL_PLACES.filter((p) => p.cat === cat);
-    if (rightSubcats && rightSubcats.length > 0) filtered = filtered.filter((p) => p.tags.length === 0 || p.tags.some((t) => rightSubcats.includes(t)));
-    setPlaceCards(filtered.sort(() => Math.random() - 0.5));
-    setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
-  };
-
   // Non-host path: populate place cards when phase arrives via Realtime.
   // ONLY initializes — never checks for completion.
   useEffect(() => {
@@ -420,12 +485,6 @@ export default function App() {
     setFinalSel((p) => { if (p.includes(id)) return p.filter((x) => x !== id); if (p.length >= (room?.finalMaxSelections || 4)) return p; return [...p, id]; });
   };
 
-  const doFinalSubmit = async () => {
-    if (submitted) return; setSubmitted(true);
-    await update((r) => { r.finalVotes[me] = finalSel; return { ...r }; });
-    if (testMode) setTimeout(() => simulateTestVotes("final"), 600);
-  };
-
   useEffect(() => {
     if (room?.phase !== "final_vote") return;
     const allVoted = room.players.every((p) => room.finalVotes[p] !== undefined);
@@ -453,15 +512,19 @@ export default function App() {
 
   const handleReset = async () => {
     await update(() => newRoom());
-    setMe(null); setNameInput(""); setTestMode(false); setSelectedCat(null);
-    setSubcatCards([]); setSubcatRight([]); setSubcatDone(false);
-    setPlaceCards([]); setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
-    setFinalSel([]); setSubmitted(false);
+
+    try {
+      await resetLobby();
+    } catch (error) {
+      console.error("Failed to reset lobby presence.", error);
+    }
+
+    resetLocalUi();
   };
 
   if (loading) return (<div className="app grain" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" }}><div className="waiting-dots"><span /><span /><span /></div></div>);
 
-  const isHost = room.players[0] === me;
+  const isHost = displayPlayers[0] === me;
 
   // JOIN
   if (!me) return (
@@ -471,12 +534,14 @@ export default function App() {
           <div style={{ display: "inline-block", padding: "6px 18px", borderRadius: 100, background: "var(--gd)", color: "var(--gold)", fontSize: 11, fontWeight: 600, letterSpacing: 3, marginBottom: 20 }}>MARCH 20–22</div>
           <h1 className="syne" style={{ fontSize: 64, fontWeight: 800, lineHeight: .95, letterSpacing: -3, marginBottom: 4, background: "linear-gradient(135deg, #fff 30%, var(--gold))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>DUBAI</h1>
           <p style={{ color: "var(--td)", fontSize: 16, letterSpacing: 2, marginBottom: 40 }}>WEEKEND</p>
-          <Dots players={room.players} max={MAX_PLAYERS} />
-          <p style={{ color: "var(--tm)", fontSize: 13, marginTop: 12, marginBottom: 32 }}>{room.players.length}/{MAX_PLAYERS} joined{room.players.length > 0 && ` · ${room.players.join(", ")}`}</p>
-          {room.players.length < MAX_PLAYERS ? (
+          <Dots players={displayPlayers} max={MAX_PLAYERS} />
+          <p style={{ color: "var(--tm)", fontSize: 13, marginTop: 12, marginBottom: 32 }}>{displayPlayers.length}/{MAX_PLAYERS} joined{displayPlayers.length > 0 && ` · ${displayPlayers.join(", ")}`}</p>
+          {displayPlayers.length < MAX_PLAYERS ? (
             <>
-              <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleJoin()} placeholder="Enter your name" style={{ width: "100%", padding: "16px 20px", borderRadius: 14, background: "var(--s)", border: "1px solid var(--bl)", color: "var(--t)", fontSize: 16, fontFamily: "'Outfit',sans-serif", outline: "none", textAlign: "center", marginBottom: 12 }} />
-              <button onClick={handleJoin} style={{ width: "100%", padding: 16, borderRadius: 14, background: nameInput.trim() ? "var(--gold)" : "var(--s)", border: "none", color: nameInput.trim() ? "#07070c" : "var(--tm)", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: nameInput.trim() ? "pointer" : "not-allowed" }}>Join Room</button>
+              <input value={nameInput} onChange={(e) => { setNameInput(e.target.value); setJoinError(""); }} onKeyDown={(e) => e.key === "Enter" && handleJoin()} placeholder="Enter your name" style={{ width: "100%", padding: "16px 20px", borderRadius: 14, background: "var(--s)", border: "1px solid var(--bl)", color: "var(--t)", fontSize: 16, fontFamily: "'Outfit',sans-serif", outline: "none", textAlign: "center", marginBottom: 12 }} />
+              <input value={pinInput} onChange={(e) => { setPinInput(e.target.value.replace(/\D/g, "").slice(0, 3)); setJoinError(""); }} onKeyDown={(e) => e.key === "Enter" && handleJoin()} placeholder="3-digit PIN" inputMode="numeric" maxLength={3} style={{ width: "100%", padding: "16px 20px", borderRadius: 14, background: "var(--s)", border: "1px solid var(--bl)", color: "var(--t)", fontSize: 16, fontFamily: "'Outfit',sans-serif", outline: "none", textAlign: "center", letterSpacing: 4, marginBottom: 12 }} />
+              <button onClick={handleJoin} style={{ width: "100%", padding: 16, borderRadius: 14, background: nameInput.trim() && pinInput.trim().length === 3 ? "var(--gold)" : "var(--s)", border: "none", color: nameInput.trim() && pinInput.trim().length === 3 ? "#07070c" : "var(--tm)", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: nameInput.trim() && pinInput.trim().length === 3 ? "pointer" : "not-allowed" }}>Join Room</button>
+              {joinError && <p style={{ color: "var(--red)", fontSize: 13, marginTop: 12 }}>{joinError}</p>}
             </>
           ) : (<p style={{ color: "var(--gold)", fontWeight: 600, fontSize: 14 }}>Room is full!</p>)}
         </div>
@@ -486,16 +551,16 @@ export default function App() {
 
   // LOBBY
   if (room.phase === "lobby") {
-    const canStart = room.players.length === MAX_PLAYERS;
+    const canStart = displayPlayers.length === MAX_PLAYERS;
     return (
       <div className="app grain">
         {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "40px 24px", textAlign: "center" }}>
           <h2 className="syne fade-up" style={{ fontSize: 28, marginBottom: 8 }}>Waiting Room</h2>
-          <p className="fade-up s1" style={{ color: "var(--td)", marginBottom: 32 }}>{room.players.length}/{MAX_PLAYERS} players</p>
-          <Dots players={room.players} max={MAX_PLAYERS} />
+          <p className="fade-up s1" style={{ color: "var(--td)", marginBottom: 32 }}>{displayPlayers.length}/{MAX_PLAYERS} players</p>
+          <Dots players={displayPlayers} max={MAX_PLAYERS} />
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
-            {room.players.map((p, i) => (
+            {displayPlayers.map((p, i) => (
               <div key={p} className={`fade-up s${i + 1}`} style={{ padding: "12px 16px", borderRadius: 12, background: p === me ? "var(--gd)" : "var(--s)", border: `1px solid ${p === me ? "rgba(240,168,48,0.3)" : "var(--b)"}`, display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 32, height: 32, borderRadius: "50%", background: p === me ? "var(--gold)" : "var(--sh)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: p === me ? "#07070c" : "var(--t)" }}>{p.charAt(0).toUpperCase()}</div>
                 <span style={{ fontWeight: 600, fontSize: 15 }}>{p}</span>
@@ -505,7 +570,7 @@ export default function App() {
             ))}
           </div>
           {isHost && !canStart && (<button onClick={fillTestPlayers} style={{ width: "100%", marginTop: 16, padding: 12, borderRadius: 12, background: "var(--redd)", border: "1px solid rgba(248,113,113,0.3)", color: "var(--red)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🧪 Fill with test players</button>)}
-          {isHost && (<button onClick={canStart ? handleStart : undefined} style={{ width: "100%", marginTop: 16, padding: 16, borderRadius: 14, background: canStart ? "var(--gold)" : "var(--s)", border: "none", color: canStart ? "#07070c" : "var(--tm)", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: canStart ? "pointer" : "not-allowed" }}>{canStart ? "Start →" : `Need ${MAX_PLAYERS - room.players.length} more`}</button>)}
+          {isHost && (<button onClick={canStart ? handleStart : undefined} style={{ width: "100%", marginTop: 16, padding: 16, borderRadius: 14, background: canStart ? "var(--gold)" : "var(--s)", border: "none", color: canStart ? "#07070c" : "var(--tm)", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: canStart ? "pointer" : "not-allowed" }}>{canStart ? "Start →" : `Need ${MAX_PLAYERS - displayPlayers.length} more`}</button>)}
           {!isHost && <Waiting message="Waiting for host..." sub="Hang tight" />}
         </div>
       </div>
