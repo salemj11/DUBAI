@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(yes:*)",
+      "Read(//private/tmp/**)",
+      "Bash(cp -r /tmp/dubai-trip-tmp/. /Users/salem/dubai-trip/)",
+      "Bash(rm -rf /tmp/dubai-trip-tmp)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npx vercel:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//Users/salem/.nvm/versions/node/**)",
+      "Bash(curl -s http://localhost:5173)"
+    ]
+  }
+}
