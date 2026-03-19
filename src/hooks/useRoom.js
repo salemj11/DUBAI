@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   joinRoom as joinLobby,
   leaveRoom as leaveLobby,
@@ -19,6 +19,7 @@ const EMPTY_LOBBY = {
 function newRoom() {
   return {
     players: [], phase: 'lobby', round: 1,
+    isTestMode: false, testPlayers: [],
     categoryOptions: ['food', 'chill', 'activity'],
     categoryVotes: {}, categoryShowResults: false, winningCategory: null,
     subcatSwipes: {}, placeSwipes: {},
@@ -36,6 +37,12 @@ export function useRoom() {
   const [room, setRoom] = useState(null)
   const [lobby, setLobby] = useState(EMPTY_LOBBY)
   const [loading, setLoading] = useState(true)
+  const roomRef = useRef(null)
+
+  const applyRoomState = useCallback((nextRoom) => {
+    roomRef.current = nextRoom
+    setRoom(nextRoom)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -65,7 +72,7 @@ export function useRoom() {
         if (upsertError) throw upsertError
 
         if (isMounted) {
-          setRoom(initialState)
+          applyRoomState(initialState)
           setLoading(false)
         }
 
@@ -78,7 +85,7 @@ export function useRoom() {
               const state = payload.new?.state
 
               if (isMounted) {
-                setRoom(validState(state) ? state : newRoom())
+                applyRoomState(validState(state) ? state : newRoom())
               }
             }
           )
@@ -87,7 +94,7 @@ export function useRoom() {
         console.error('Failed to load room state.', error)
 
         if (isMounted) {
-          setRoom(newRoom())
+          applyRoomState(newRoom())
           setLoading(false)
         }
       }
@@ -103,7 +110,7 @@ export function useRoom() {
         void supabase.removeChannel(channel)
       }
     }
-  }, [])
+  }, [applyRoomState])
 
   const updateRoom = useCallback(async (fn) => {
     await ensureAnonymousSupabaseSession()
@@ -124,7 +131,10 @@ export function useRoom() {
       .upsert({ id: ROOM_ID, state: nextState }, { onConflict: 'id' })
 
     if (upsertError) throw upsertError
-  }, [])
+
+    applyRoomState(nextState)
+    return nextState
+  }, [applyRoomState])
 
   return {
     room,

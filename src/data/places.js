@@ -77,6 +77,7 @@ export const ALL_PLACES = [
 export function newRoom() {
   return {
     players: [], phase: "lobby", round: 1,
+    isTestMode: false, testPlayers: [],
     categoryOptions: ["food", "chill", "activity"],
     categoryVotes: {}, categoryShowResults: false, winningCategory: null,
     subcatSwipes: {}, placeSwipes: {},
@@ -84,4 +85,31 @@ export function newRoom() {
     finalVoteEndTime: null, finalRound: 1, finalShowResults: false,
     decidedPlace: null,
   };
+}
+
+// Helper: extract stored test player names from room state
+export function getStoredTestPlayers(room) {
+  if (!Array.isArray(room?.testPlayers)) return [];
+  return room.testPlayers.filter((name) => typeof name === "string");
+}
+
+// Helper: deduplicate names
+export function uniqueNames(names) {
+  return Array.from(new Set(names.filter((name) => typeof name === "string" && name.trim())));
+}
+
+// Helper: build display player list from presence + test bots
+export function getLobbyDisplayPlayers(room, lobbyPlayers, me) {
+  const actualPlayers = uniqueNames(lobbyPlayers.map((player) => player.name));
+  const basePlayers = actualPlayers.length > 0 ? actualPlayers : uniqueNames([me]);
+  const syntheticPlayers = getStoredTestPlayers(room)
+    .filter((name) => !basePlayers.includes(name))
+    .slice(0, Math.max(0, MAX_PLAYERS - basePlayers.length));
+  return [...basePlayers, ...syntheticPlayers].slice(0, MAX_PLAYERS);
+}
+
+// Helper: get automated (bot) player names for simulation
+export function getAutomatedPlayers(room, me) {
+  const testPlayers = new Set(getStoredTestPlayers(room));
+  return room.players.filter((player) => player !== me && testPlayers.has(player));
 }

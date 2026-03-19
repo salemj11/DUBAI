@@ -4,6 +4,7 @@ import { useRoom } from "./hooks/useRoom.js";
 import {
   MAX_PLAYERS, MAX_PLACE_SWIPES, FINAL_VOTE_SECONDS, TEST_NAMES,
   CATEGORIES, SUBCATEGORIES, ALL_PLACES, newRoom,
+  getStoredTestPlayers, uniqueNames, getLobbyDisplayPlayers, getAutomatedPlayers,
 } from "./data/places.js";
 import JoinScreen from "./screens/JoinScreen.jsx";
 import LobbyScreen from "./screens/LobbyScreen.jsx";
@@ -22,7 +23,6 @@ export default function App() {
   const [nameInput, setNameInput] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [joinError, setJoinError] = useState("");
-  const [testMode, setTestMode] = useState(false);
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
   const [subcatRight, setSubcatRight] = useState([]);
@@ -35,21 +35,105 @@ export default function App() {
   const [timerLeft, setTimerLeft] = useState(FINAL_VOTE_SECONDS);
   const [submitted, setSubmitted] = useState(false);
   const timerRef = useRef(null);
-  // Overlay screens (roulette/timeline) that sit on top of the decided phase
   const [overlay, setOverlay] = useState(null); // null | "roulette" | "timeline"
 
   const room = roomState || newRoom();
+  const testMode = room.isTestMode === true;
+  const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
+  const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
+
+  // ── Reset all local UI state ──────────────────────────
+  const resetLocalUi = useCallback(() => {
+    clearInterval(timerRef.current);
+    setMe(null);
+    setNameInput("");
+    setPinInput("");
+    setJoinError("");
+    setSelectedCat(null);
+    setSubcatCards([]);
+    setSubcatRight([]);
+    setSubcatDone(false);
+    setPlaceCards([]);
+    setPlaceRight([]);
+    setPlaceSwipesLeft(MAX_PLACE_SWIPES);
+    setPlaceDone(false);
+    setFinalSel([]);
+    setTimerLeft(FINAL_VOTE_SECONDS);
+    setSubmitted(false);
+    setOverlay(null);
+  }, []);
 
   // ── Handle lobby reset events (kicked back to login) ──
   useEffect(() => {
-    if (lobby.wasReset && me) {
-      setMe(null); setNameInput(""); setPinInput(""); setJoinError("");
-      setTestMode(false); setSelectedCat(null);
-      setSubcatCards([]); setSubcatRight([]); setSubcatDone(false);
-      setPlaceCards([]); setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
-      setFinalSel([]); setSubmitted(false); setOverlay(null);
+    if (!lobby.wasReset) return;
+    const timeoutId = window.setTimeout(() => { resetLocalUi(); }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [lobby.wasReset, lobby.resetVersion, resetLocalUi]);
+
+  // ── Leave lobby on unmount ────────────────────────────
+  useEffect(() => {
+    return () => { void leaveLobby(); };
+  }, [leaveLobby]);
+
+  // ── Room updater ──────────────────────────────────────
+  const update = useCallback(async (fn) => {
+    await updateRoom((current) => {
+      const state = current && Object.keys(current).length > 0 ? current : newRoom();
+      return fn(state);
+    });
+  }, [updateRoom]);
+
+  // ── Test mode bot simulation ──────────────────────────
+  const simulateTestVotes = async (phase) => {
+    const automatedPlayers = getAutomatedPlayers(room, me);
+    if (automatedPlayers.length === 0) return;
+
+    if (phase === "category") {
+      await update((r) => {
+        const opts = r.categoryOptions;
+        automatedPlayers.forEach((n) => { if (!r.categoryVotes[n] && r.players.includes(n)) r.categoryVotes[n] = opts[Math.random() < 0.5 ? 0 : Math.floor(Math.random() * opts.length)]; });
+        return { ...r };
+      });
+    } else if (phase === "subcat") {
+      await update((r) => {
+        automatedPlayers.forEach((n) => {
+          if (!r.subcatSwipes[n] && r.players.includes(n)) {
+            const subcats = SUBCATEGORIES[r.winningCategory];
+            const allIds = []; Object.values(subcats || {}).forEach((items) => items.forEach((it) => allIds.push(it.id)));
+            r.subcatSwipes[n] = { done: true, right: allIds.filter(() => Math.random() > 0.4) };
+          }
+        });
+        return { ...r };
+      });
+    } else if (phase === "place") {
+      await update((r) => {
+        automatedPlayers.forEach((n) => {
+          if (!r.placeSwipes[n] && r.players.includes(n)) {
+            const catPlaces = ALL_PLACES.filter((p) => p.cat === r.winningCategory);
+            r.placeSwipes[n] = { done: true, right: catPlaces.sort(() => Math.random() - 0.5).slice(0, MAX_PLACE_SWIPES).map((p) => p.id) };
+          }
+        });
+        return { ...r };
+      });
+    } else if (phase === "final") {
+      await update((r) => {
+        automatedPlayers.forEach((n) => {
+          if (!r.finalVotes[n] && r.players.includes(n)) {
+            r.finalVotes[n] = r.finalOptions.sort(() => Math.random() - 0.5).slice(0, Math.min(r.finalMaxSelections, r.finalOptions.length));
+          }
+        });
+        return { ...r };
+      });
     }
-  }, [lobby.wasReset, lobby.resetVersion]);
+  };
+
+  // ── Final vote submit (hoisted for timer) ─────────────
+  async function doFinalSubmit() {
+    if (submitted) return;
+    setSubmitted(true);
+    await update((r) => { r.finalVotes[me] = finalSel; return { ...r }; });
+    if (testMode) setTimeout(() => simulateTestVotes("final"), 600);
+  }
 
   // ── Timer for final vote ──────────────────────────────
   useEffect(() => {
@@ -62,82 +146,49 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [room?.phase, room?.finalVoteEndTime, submitted]);
 
-  // ── Room updater ──────────────────────────────────────
-  const update = useCallback(async (fn) => {
-    await updateRoom((current) => {
-      const state = current && Object.keys(current).length > 0 ? current : newRoom();
-      return fn(state);
-    });
-  }, [updateRoom]);
-
-  // ── Test mode helpers ─────────────────────────────────
-  const simulateTestVotes = async (phase) => {
-    if (phase === "category") {
-      await update((r) => {
-        const opts = r.categoryOptions;
-        TEST_NAMES.forEach((n) => { if (!r.categoryVotes[n] && r.players.includes(n)) r.categoryVotes[n] = opts[Math.random() < 0.5 ? 0 : Math.floor(Math.random() * opts.length)]; });
-        return { ...r };
-      });
-    } else if (phase === "subcat") {
-      await update((r) => {
-        TEST_NAMES.forEach((n) => {
-          if (!r.subcatSwipes[n] && r.players.includes(n)) {
-            const subcats = SUBCATEGORIES[r.winningCategory];
-            const allIds = []; Object.values(subcats || {}).forEach((items) => items.forEach((it) => allIds.push(it.id)));
-            r.subcatSwipes[n] = { done: true, right: allIds.filter(() => Math.random() > 0.4) };
-          }
-        });
-        return { ...r };
-      });
-    } else if (phase === "place") {
-      await update((r) => {
-        TEST_NAMES.forEach((n) => {
-          if (!r.placeSwipes[n] && r.players.includes(n)) {
-            const catPlaces = ALL_PLACES.filter((p) => p.cat === r.winningCategory);
-            r.placeSwipes[n] = { done: true, right: catPlaces.sort(() => Math.random() - 0.5).slice(0, MAX_PLACE_SWIPES).map((p) => p.id) };
-          }
-        });
-        return { ...r };
-      });
-    } else if (phase === "final") {
-      await update((r) => {
-        TEST_NAMES.forEach((n) => {
-          if (!r.finalVotes[n] && r.players.includes(n)) {
-            r.finalVotes[n] = r.finalOptions.sort(() => Math.random() - 0.5).slice(0, Math.min(r.finalMaxSelections, r.finalOptions.length));
-          }
-        });
-        return { ...r };
-      });
-    }
-  };
-
-  // ── Join / lobby handlers ─────────────────────────────
+  // ── Join handler (presence + room state) ──────────────
   const handleJoin = async () => {
     const name = nameInput.trim();
     const pin = pinInput.trim();
-    if (!name || !/^\d{3}$/.test(pin)) return;
-    setJoinError("");
-
+    if (!name || !pin) return;
     try {
-      // 1. Join the presence lobby (validates PIN, name uniqueness, room capacity)
+      setJoinError("");
       await joinLobby({ name, pin });
-      // 2. Also add to room.players for game state
-      await update((r) => {
-        if (r.players.length >= MAX_PLAYERS || r.players.includes(name)) return r;
-        r.players.push(name); return { ...r };
-      });
       setMe(name);
-    } catch (err) {
-      setJoinError(err.message || "Could not join — try again.");
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : "Unable to join room.");
     }
   };
 
+  // ── Fill test players (host only) ─────────────────────
   const fillTestPlayers = async () => {
-    setTestMode(true);
-    await update((r) => { TEST_NAMES.forEach((n) => { if (!r.players.includes(n) && r.players.length < MAX_PLAYERS) r.players.push(n); }); return { ...r }; });
+    await update((r) => {
+      const actualPlayers = uniqueNames([
+        ...lobby.players.map((player) => player.name),
+        me,
+      ]);
+      const syntheticPlayers = TEST_NAMES
+        .filter((name) => !actualPlayers.includes(name))
+        .slice(0, Math.max(0, MAX_PLAYERS - actualPlayers.length));
+      return {
+        ...r,
+        isTestMode: syntheticPlayers.length > 0,
+        testPlayers: syntheticPlayers,
+      };
+    });
   };
 
-  const handleStart = async () => { await update((r) => ({ ...r, phase: "category_vote", categoryVotes: {}, categoryShowResults: false })); };
+  // ── Start game (snapshot displayPlayers into room.players) ─
+  const handleStart = async () => {
+    if (displayPlayers.length !== MAX_PLAYERS) return;
+    await update((r) => ({
+      ...r,
+      players: displayPlayers,
+      phase: "category_vote",
+      categoryVotes: {},
+      categoryShowResults: false,
+    }));
+  };
 
   // ── Category vote handlers ────────────────────────────
   const handleCatVote = async () => {
@@ -147,6 +198,13 @@ export default function App() {
   };
 
   const handleCatReveal = async () => { await update((r) => ({ ...r, categoryShowResults: true })); };
+
+  function initPlaceCards(cat, rightSubcats) {
+    let filtered = ALL_PLACES.filter((p) => p.cat === cat);
+    if (rightSubcats && rightSubcats.length > 0) filtered = filtered.filter((p) => p.tags.length === 0 || p.tags.some((t) => rightSubcats.includes(t)));
+    setPlaceCards(filtered.sort(() => Math.random() - 0.5));
+    setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
+  }
 
   const handleCatProceed = async () => {
     const r = room;
@@ -173,7 +231,7 @@ export default function App() {
     setSelectedCat(null);
   };
 
-  // ── Subcat swipe helpers ──────────────────────────────
+  // ── Subcat swipe ──────────────────────────────────────
   const buildSubcatCards = (cat) => {
     const sc = SUBCATEGORIES[cat]; if (!sc) return [];
     const cards = []; Object.entries(sc).forEach(([gk, items]) => items.forEach((it) => cards.push({ ...it, group: gk }))); return cards;
@@ -210,14 +268,7 @@ export default function App() {
     }
   }, [room?.subcatSwipes, room?.phase]);
 
-  // ── Place swipe helpers ───────────────────────────────
-  const initPlaceCards = (cat, rightSubcats) => {
-    let filtered = ALL_PLACES.filter((p) => p.cat === cat);
-    if (rightSubcats && rightSubcats.length > 0) filtered = filtered.filter((p) => p.tags.length === 0 || p.tags.some((t) => rightSubcats.includes(t)));
-    setPlaceCards(filtered.sort(() => Math.random() - 0.5));
-    setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
-  };
-
+  // ── Place swipe ───────────────────────────────────────
   useEffect(() => {
     if (room?.phase === "place_swipe" && room?.winningCategory && !placeDone && placeCards.length === 0) {
       const allR = new Set();
@@ -253,16 +304,10 @@ export default function App() {
     }
   }, [room?.placeSwipes, room?.phase]);
 
-  // ── Final vote handlers ───────────────────────────────
+  // ── Final vote ────────────────────────────────────────
   const toggleFinal = (id) => {
     if (submitted) return;
     setFinalSel((p) => { if (p.includes(id)) return p.filter((x) => x !== id); if (p.length >= (room?.finalMaxSelections || 4)) return p; return [...p, id]; });
-  };
-
-  const doFinalSubmit = async () => {
-    if (submitted) return; setSubmitted(true);
-    await update((r) => { r.finalVotes[me] = finalSel; return { ...r }; });
-    if (testMode) setTimeout(() => simulateTestVotes("final"), 600);
   };
 
   useEffect(() => {
@@ -290,21 +335,17 @@ export default function App() {
     }
   };
 
-  // ── Reset ─────────────────────────────────────────────
+  // ── Reset (room state + presence) ─────────────────────
   const handleReset = async () => {
-    try { await resetLobby(); } catch (e) { console.warn("Lobby reset failed:", e); }
     await update(() => newRoom());
-    setMe(null); setNameInput(""); setPinInput(""); setJoinError("");
-    setTestMode(false); setSelectedCat(null);
-    setSubcatCards([]); setSubcatRight([]); setSubcatDone(false);
-    setPlaceCards([]); setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
-    setFinalSel([]); setSubmitted(false); setOverlay(null);
+    try { await resetLobby(); } catch (error) { console.error("Failed to reset lobby presence.", error); }
+    resetLocalUi();
   };
 
   // ── Loading ───────────────────────────────────────────
   if (loading) return (<div className="app grain" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" }}><div className="waiting-dots"><span /><span /><span /></div></div>);
 
-  const isHost = room.players[0] === me;
+  const isHost = displayPlayers[0] === me;
 
   // ── Overlay screens (roulette / timeline) ─────────────
   if (overlay === "roulette") return <RouletteScreen room={room} onBack={() => setOverlay(null)} />;
@@ -313,7 +354,7 @@ export default function App() {
   // ── Phase router ──────────────────────────────────────
   if (!me) return <JoinScreen lobby={lobby} nameInput={nameInput} setNameInput={setNameInput} pinInput={pinInput} setPinInput={setPinInput} handleJoin={handleJoin} error={joinError} />;
 
-  if (room.phase === "lobby") return <LobbyScreen room={room} lobby={lobby} me={me} testMode={testMode} isHost={isHost} fillTestPlayers={fillTestPlayers} handleStart={handleStart} />;
+  if (room.phase === "lobby") return <LobbyScreen room={room} displayPlayers={displayPlayers} me={me} testMode={testMode} isHost={isHost} fillTestPlayers={fillTestPlayers} handleStart={handleStart} />;
 
   if (room.phase === "category_vote" && !room.categoryShowResults) return <CategoryVoteScreen room={room} me={me} testMode={testMode} isHost={isHost} selectedCat={selectedCat} setSelectedCat={setSelectedCat} handleCatVote={handleCatVote} handleCatReveal={handleCatReveal} />;
 
