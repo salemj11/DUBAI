@@ -82,6 +82,7 @@ const ALL_PLACES = [
 function newRoom() {
   return {
     players: [], phase: "lobby", round: 1,
+    isTestMode: false, testPlayers: [],
     categoryOptions: ["food", "chill", "activity"],
     categoryVotes: {}, categoryShowResults: false, winningCategory: null,
     subcatSwipes: {}, placeSwipes: {},
@@ -89,6 +90,32 @@ function newRoom() {
     finalVoteEndTime: null, finalRound: 1, finalShowResults: false,
     decidedPlace: null,
   };
+}
+
+function getStoredTestPlayers(room) {
+  if (!Array.isArray(room?.testPlayers)) return [];
+
+  return room.testPlayers.filter((name) => typeof name === "string");
+}
+
+function getLobbyDisplayPlayers(room, lobbyPlayers) {
+  const actualPlayers = lobbyPlayers.map((player) => player.name);
+
+  if (actualPlayers.length === 0) {
+    return [];
+  }
+
+  const syntheticPlayers = getStoredTestPlayers(room)
+    .filter((name) => !actualPlayers.includes(name))
+    .slice(0, MAX_PLAYERS - actualPlayers.length);
+
+  return [...actualPlayers, ...syntheticPlayers].slice(0, MAX_PLAYERS);
+}
+
+function getAutomatedPlayers(room, me) {
+  const testPlayers = new Set(getStoredTestPlayers(room));
+
+  return room.players.filter((player) => player !== me && testPlayers.has(player));
 }
 
 function Dots({ players, max }) {
@@ -213,7 +240,6 @@ export default function App() {
   const [nameInput, setNameInput] = useState("");
   const [pinInput, setPinInput] = useState("");
   const [joinError, setJoinError] = useState("");
-  const [testMode, setTestMode] = useState(false);
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
   const [subcatRight, setSubcatRight] = useState([]);
@@ -228,9 +254,8 @@ export default function App() {
   const timerRef = useRef(null);
 
   const room = roomState || newRoom();
-  const liveLobbyPlayers = (testMode && room.phase === "lobby" && room.players.length > lobby.players.length)
-    ? room.players
-    : lobby.players.map((player) => player.name);
+  const testMode = room.isTestMode === true;
+  const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
 
   const resetLocalUi = useCallback(() => {
@@ -239,7 +264,6 @@ export default function App() {
     setNameInput("");
     setPinInput("");
     setJoinError("");
-    setTestMode(false);
     setSelectedCat(null);
     setSubcatCards([]);
     setSubcatRight([]);
@@ -276,15 +300,19 @@ export default function App() {
   }, [updateRoom]);
 
   const simulateTestVotes = async (phase) => {
+    const automatedPlayers = getAutomatedPlayers(room, me);
+
+    if (automatedPlayers.length === 0) return;
+
     if (phase === "category") {
       await update((r) => {
         const opts = r.categoryOptions;
-        TEST_NAMES.forEach((n) => { if (!r.categoryVotes[n] && r.players.includes(n)) r.categoryVotes[n] = opts[Math.random() < 0.5 ? 0 : Math.floor(Math.random() * opts.length)]; });
+        automatedPlayers.forEach((n) => { if (!r.categoryVotes[n] && r.players.includes(n)) r.categoryVotes[n] = opts[Math.random() < 0.5 ? 0 : Math.floor(Math.random() * opts.length)]; });
         return { ...r };
       });
     } else if (phase === "subcat") {
       await update((r) => {
-        TEST_NAMES.forEach((n) => {
+        automatedPlayers.forEach((n) => {
           if (!r.subcatSwipes[n] && r.players.includes(n)) {
             const subcats = SUBCATEGORIES[r.winningCategory];
             const allIds = []; Object.values(subcats || {}).forEach((items) => items.forEach((it) => allIds.push(it.id)));
@@ -295,7 +323,7 @@ export default function App() {
       });
     } else if (phase === "place") {
       await update((r) => {
-        TEST_NAMES.forEach((n) => {
+        automatedPlayers.forEach((n) => {
           if (!r.placeSwipes[n] && r.players.includes(n)) {
             const catPlaces = ALL_PLACES.filter((p) => p.cat === r.winningCategory);
             r.placeSwipes[n] = { done: true, right: catPlaces.sort(() => Math.random() - 0.5).slice(0, MAX_PLACE_SWIPES).map((p) => p.id) };
@@ -305,7 +333,7 @@ export default function App() {
       });
     } else if (phase === "final") {
       await update((r) => {
-        TEST_NAMES.forEach((n) => {
+        automatedPlayers.forEach((n) => {
           if (!r.finalVotes[n] && r.players.includes(n)) {
             r.finalVotes[n] = r.finalOptions.sort(() => Math.random() - 0.5).slice(0, Math.min(r.finalMaxSelections, r.finalOptions.length));
           }
@@ -347,10 +375,17 @@ export default function App() {
   };
 
   const fillTestPlayers = async () => {
-    setTestMode(true);
     await update((r) => {
-      const seededPlayers = [...new Set([...lobby.players.map((player) => player.name), ...TEST_NAMES])].slice(0, MAX_PLAYERS);
-      return { ...r, players: seededPlayers };
+      const actualPlayers = lobby.players.map((player) => player.name);
+      const syntheticPlayers = TEST_NAMES
+        .filter((name) => !actualPlayers.includes(name))
+        .slice(0, Math.max(0, MAX_PLAYERS - actualPlayers.length));
+
+      return {
+        ...r,
+        isTestMode: syntheticPlayers.length > 0,
+        testPlayers: syntheticPlayers,
+      };
     });
   };
 

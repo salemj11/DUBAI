@@ -19,6 +19,7 @@ const EMPTY_LOBBY = {
 function newRoom() {
   return {
     players: [], phase: 'lobby', round: 1,
+    isTestMode: false, testPlayers: [],
     categoryOptions: ['food', 'chill', 'activity'],
     categoryVotes: {}, categoryShowResults: false, winningCategory: null,
     subcatSwipes: {}, placeSwipes: {},
