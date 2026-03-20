@@ -274,25 +274,13 @@ function projectJourneyPoints(points) {
     return [];
   }
 
-  const latitudes = points.map((point) => point.coords.lat);
-  const longitudes = points.map((point) => point.coords.lng);
-  const minLatitude = Math.min(...latitudes);
-  const maxLatitude = Math.max(...latitudes);
-  const minLongitude = Math.min(...longitudes);
-  const maxLongitude = Math.max(...longitudes);
-  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.02);
-  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.02);
-  const paddedMinLatitude = minLatitude - latitudeSpan * 0.18;
-  const paddedMaxLatitude = maxLatitude + latitudeSpan * 0.18;
-  const paddedMinLongitude = minLongitude - longitudeSpan * 0.18;
-  const paddedMaxLongitude = maxLongitude + longitudeSpan * 0.18;
-  const safeLatitudeSpan = paddedMaxLatitude - paddedMinLatitude;
-  const safeLongitudeSpan = paddedMaxLongitude - paddedMinLongitude;
+  const lanePattern = [18, 74, 30, 82, 24, 70, 38, 78];
+  const endY = points.length === 1 ? 50 : 84;
 
   return points.map((point) => ({
     ...point,
-    x: 12 + ((point.coords.lng - paddedMinLongitude) / safeLongitudeSpan) * 76,
-    y: 14 + ((paddedMaxLatitude - point.coords.lat) / safeLatitudeSpan) * 72,
+    x: points.length === 1 ? 50 : lanePattern[point.sequence % lanePattern.length],
+    y: 16 + ((endY - 16) / Math.max(points.length - 1, 1)) * point.sequence,
   }));
 }
 
@@ -309,7 +297,6 @@ function buildJourneyDay(day, placeDetailsById) {
 
   let previousCoords = DEFAULT_USER_LOCATION;
   let totalDistanceMeters = 0;
-  let pinnedStopCount = 0;
 
   const stops = day.events
     .filter((event) => event.status !== "cancelled")
@@ -322,7 +309,6 @@ function buildJourneyDay(day, placeDetailsById) {
       if (coords) {
         previousCoords = coords;
         totalDistanceMeters += legDistanceMeters ?? 0;
-        pinnedStopCount += 1;
       }
 
       return {
@@ -371,7 +357,6 @@ function buildJourneyDay(day, placeDetailsById) {
     stops,
     plottedPoints,
     totalDistanceMeters,
-    pinnedStopCount,
   };
 }
 
@@ -827,10 +812,10 @@ function JourneyWorkspace({
 
         <div className="journey-summary-card fade-up s2">
           <div>
-            <p className="timeline-kicker">Route View</p>
-            <h3 className="syne" style={{ fontSize: 22, marginBottom: 6 }}>From FIVE Palm through the plan</h3>
+            <p className="timeline-kicker">Route Board</p>
+            <h3 className="syne" style={{ fontSize: 22, marginBottom: 6 }}>A styled path through the plan</h3>
             <p className="journey-summary-copy">
-              Locked and confirmed plans anchor the path. Pending timeline adds stay on the route until they confirm or auto-cancel.
+              This is intentionally not a literal Dubai map. It is a cleaner trip-board view that tracks the order of the timeline from FIVE Palm onward.
             </p>
           </div>
           <div className="journey-stat-row">
@@ -840,11 +825,11 @@ function JourneyWorkspace({
             </div>
             <div className="journey-stat-pill">
               <Route size={14} />
-              <span>{formatRouteDistance(journey.totalDistanceMeters)} traced</span>
+              <span>{journey.totalDistanceMeters > 0 ? `${formatRouteDistance(journey.totalDistanceMeters)} estimated travel` : "Abstract route view"}</span>
             </div>
             <div className="journey-stat-pill">
               <MapPin size={14} />
-              <span>{journey.pinnedStopCount}/{journey.stops.length} pinned</span>
+              <span>{day.label}</span>
             </div>
           </div>
         </div>
@@ -885,15 +870,17 @@ function JourneyWorkspace({
                   </marker>
                 </defs>
                 {segments.map((segment) => (
-                  <line
+                  <path
                     key={segment.id}
-                    x1={segment.from.x}
-                    y1={segment.from.y}
-                    x2={segment.to.x}
-                    y2={segment.to.y}
+                    d={[
+                      `M ${segment.from.x} ${segment.from.y}`,
+                      `Q ${((segment.from.x + segment.to.x) / 2) + (segment.to.sequence % 2 === 0 ? 10 : -10)} ${((segment.from.y + segment.to.y) / 2) - 4}`,
+                      `${segment.to.x} ${segment.to.y}`,
+                    ].join(" ")}
                     stroke="url(#journey-route-gradient)"
                     strokeWidth="2.4"
                     strokeLinecap="round"
+                    fill="none"
                     strokeDasharray={segment.to.tone.label === "PENDING" ? "5 4" : undefined}
                     markerEnd="url(#journey-route-arrow)"
                     opacity={0.88}
@@ -3540,7 +3527,7 @@ export default function App() {
             <MenuActionCard
               icon={<Route size={22} />}
               title="Our journey"
-              copy="See the route from FIVE Palm through the current timeline, day by day, with a clean trip map and ordered stops."
+              copy="See a styled route board from FIVE Palm through the current timeline, day by day, with a cleaner sequence of stops."
               meta={`${journeyEventCount} active stops · route starts at FIVE Palm`}
               badge={journeyEventCount > 0 ? `${journeyEventCount} stops` : null}
               accent="var(--green)"
