@@ -35,11 +35,19 @@ export async function createEvent(input) {
 }
 
 export async function seedLockedTimelineEvents(events) {
+  await ensureAnonymousSupabaseSession()
+
   if (!Array.isArray(events) || events.length === 0) {
+    const { error } = await supabase
+      .from('events')
+      .delete()
+      .eq('created_by', 'system:locked')
+      .eq('locked', true)
+
+    if (error) throw error
+
     return []
   }
-
-  await ensureAnonymousSupabaseSession()
 
   const payload = events.map((event) => ({
     external_key: event.externalKey,
@@ -64,6 +72,28 @@ export async function seedLockedTimelineEvents(events) {
     .select('*')
 
   if (error) throw error
+
+  const lockedKeys = new Set(payload.map((event) => event.external_key))
+  const { data: existingLocked, error: existingError } = await supabase
+    .from('events')
+    .select('id, external_key')
+    .eq('created_by', 'system:locked')
+    .eq('locked', true)
+
+  if (existingError) throw existingError
+
+  const staleIds = (existingLocked ?? [])
+    .filter((event) => !lockedKeys.has(event.external_key))
+    .map((event) => event.id)
+
+  if (staleIds.length > 0) {
+    const { error: deleteError } = await supabase
+      .from('events')
+      .delete()
+      .in('id', staleIds)
+
+    if (deleteError) throw deleteError
+  }
 
   return data ?? []
 }

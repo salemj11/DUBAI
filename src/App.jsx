@@ -12,19 +12,23 @@ import {
   RotateCcw,
   Sparkles,
   Star,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
 import { useRoom } from "./hooks/useRoom.js";
 import { useTimeline } from "./hooks/useTimeline.js";
 import { fetchPlaceDetails } from "./backend/places.js";
+import { listCustomPlaces, submitCustomPlaceSuggestion } from "./backend/customPlaces.js";
 import {
+  getAllPlaces,
   CATEGORIES,
   SUBCATEGORIES,
   TRIP_DAYS,
-  getFeaturedPlaces,
   getPlaceById,
+  getPlacesByCategory,
   getSwipeablePlaces,
+  getTimelineBrowsePlaces,
   getTimelineDays,
 } from "./data/tripData.js";
 import {
@@ -46,8 +50,7 @@ import "./App.css";
 
 const SWIPE_THRESHOLD = 80;
 const TEST_NAMES = ["Test2", "Test3", "Test4", "Test5"];
-const DEFAULT_USER_LOCATION = { lat: 25.2048, lng: 55.2708 };
-const FEATURED_PLACES = getFeaturedPlaces().slice(0, 6);
+const DEFAULT_USER_LOCATION = { lat: 25.1024, lng: 55.1495 };
 
 function getStoredTestPlayers(room) {
   if (!Array.isArray(room?.testPlayers)) return [];
@@ -151,6 +154,202 @@ function flattenSubcategoryOptions(category) {
 
   return Object.entries(sections).flatMap(([group, items]) =>
     items.map((item) => ({ ...item, group }))
+  );
+}
+
+function toggleSelection(items, itemId) {
+  return items.includes(itemId)
+    ? items.filter((value) => value !== itemId)
+    : [...items, itemId];
+}
+
+function getTimelineSubcategoryOptions(categories) {
+  const merged = new Map();
+
+  (Array.isArray(categories) ? categories : []).forEach((categoryId) => {
+    flattenSubcategoryOptions(categoryId).forEach((item) => {
+      const existing = merged.get(item.id);
+
+      if (existing) {
+        existing.categoryIds = uniqueNames([...existing.categoryIds, categoryId]);
+        return;
+      }
+
+      merged.set(item.id, {
+        ...item,
+        categoryIds: [categoryId],
+      });
+    });
+  });
+
+  return Array.from(merged.values());
+}
+
+function getPlacePhotoUrls(details) {
+  if (Array.isArray(details?.photoUrls) && details.photoUrls.length > 0) {
+    return details.photoUrls.filter(Boolean);
+  }
+
+  if (details?.photoUrl) {
+    return [details.photoUrl];
+  }
+
+  return [];
+}
+
+function PlacePhotoCarousel({
+  photos,
+  fallback,
+  alt,
+  badge,
+  height = 170,
+  radius = 18,
+  className = "",
+}) {
+  const safePhotos = Array.isArray(photos) ? photos.filter(Boolean) : [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const hasPhotos = safePhotos.length > 0;
+  const canCycle = safePhotos.length > 1;
+
+  const showPrevious = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveIndex((current) => (current - 1 + safePhotos.length) % safePhotos.length);
+  };
+
+  const showNext = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveIndex((current) => (current + 1) % safePhotos.length);
+  };
+
+  return (
+    <div
+      className={`place-carousel ${className}`.trim()}
+      style={{ height, borderRadius: radius }}
+    >
+      {hasPhotos ? (
+        <img
+          className="place-carousel-image"
+          src={safePhotos[activeIndex]}
+          alt={alt}
+        />
+      ) : (
+        <div className="place-carousel-fallback">
+          {fallback}
+        </div>
+      )}
+      <div className="place-carousel-scrim" />
+      {badge && <span className="place-carousel-badge">{badge}</span>}
+      {canCycle && (
+        <>
+          <button type="button" className="place-carousel-nav left" onClick={showPrevious} aria-label={`Previous photo for ${alt}`}>
+            <ChevronLeft size={14} />
+          </button>
+          <button type="button" className="place-carousel-nav right" onClick={showNext} aria-label={`Next photo for ${alt}`}>
+            <ChevronRight size={14} />
+          </button>
+          <div className="place-carousel-dots">
+            {safePhotos.map((photoUrl, index) => (
+              <button
+                key={`${alt}-${index}`}
+                type="button"
+                className={`place-carousel-dot ${index === activeIndex ? "active" : ""}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setActiveIndex(index);
+                }}
+                aria-label={`Photo ${index + 1} for ${alt}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PlaceDetailChips({ place, details, compact = false }) {
+  const busyness = describeBusyness(details?.currentBusyness);
+  const visibleTags = Array.isArray(place.displayTags)
+    ? place.displayTags.slice(0, compact ? 2 : 3)
+    : [];
+  const visibleDishes = Array.isArray(details?.topDishes)
+    ? details.topDishes.slice(0, compact ? 1 : 2)
+    : [];
+
+  return (
+    <div className={`place-chip-row ${compact ? "compact" : ""}`}>
+      <span className="place-chip accent">
+        {"$".repeat(Math.max(1, details?.priceLevel || place.cost || 1))}
+      </span>
+      {typeof details?.rating === "number" && (
+        <span className="place-chip subtle">
+          <Star size={12} />
+          {details.rating.toFixed(1)}
+        </span>
+      )}
+      <span className="place-chip subtle">{formatDistance(details?.distanceMeters)}</span>
+      {busyness && (
+        <span className="place-chip" style={{ background: busyness.background, color: busyness.tone }}>
+          {busyness.label}
+        </span>
+      )}
+      {visibleTags.map((tag) => (
+        <span key={tag} className="place-chip subtle">
+          {tag}
+        </span>
+      ))}
+      {visibleDishes.map((dish) => (
+        <span key={dish} className="place-chip subtle">
+          {dish}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PlaceBrowseCard({ place, details, selected, onClick }) {
+  const category = CATEGORIES.find((item) => item.id === place.cat);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`browse-place-card ${selected ? "selected" : ""}`}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      }}
+    >
+      <PlacePhotoCarousel
+        photos={getPlacePhotoUrls(details)}
+        fallback={place.img}
+        alt={place.name}
+        badge={category?.label}
+        height={200}
+        radius={20}
+      />
+      <div className="browse-place-copy">
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p className="browse-place-title">{details?.name || place.name}</p>
+            <p className="browse-place-meta">{details?.formattedAddress || place.area}</p>
+          </div>
+          {selected && (
+            <div className="composer-place-check">
+              <Check size={14} color="#07070c" />
+            </div>
+          )}
+        </div>
+        <p className="browse-place-description">{details?.editorialSummary || place.vibe}</p>
+        <PlaceDetailChips place={place} details={details} />
+      </div>
+    </div>
   );
 }
 
@@ -299,7 +498,7 @@ function TimelinePreviewPanel({ timelineDays, timelineSource, placeDetailsById }
   );
 }
 
-function FeaturedPlacesRail({ places, placeDetailsById }) {
+function FeaturedPlacesRail({ places, placeDetailsById, selectedCategory, onSelectCategory }) {
   return (
     <div className="featured-panel fade-up s4">
       <div className="timeline-panel-head">
@@ -308,6 +507,19 @@ function FeaturedPlacesRail({ places, placeDetailsById }) {
           <h3 className="syne" style={{ fontSize: 20 }}>The kind of spots in rotation</h3>
         </div>
       </div>
+      <div className="featured-filter-row">
+        {CATEGORIES.map((category) => (
+          <button
+            key={category.id}
+            type="button"
+            className={`featured-filter-btn ${selectedCategory === category.id ? "active" : ""}`}
+            onClick={() => onSelectCategory(category.id)}
+          >
+            <span>{category.emoji}</span>
+            {category.label}
+          </button>
+        ))}
+      </div>
       <div className="featured-grid">
         {places.map((place, index) => {
           const details = placeDetailsById[place.id];
@@ -315,17 +527,15 @@ function FeaturedPlacesRail({ places, placeDetailsById }) {
 
           return (
             <div key={place.id} className={`featured-card card-enter s${Math.min(index + 1, 5)}`}>
-              <div className="featured-image-wrap">
-                {details?.photoUrl ? (
-                  <img className="featured-image" src={details.photoUrl} alt={place.name} />
-                ) : (
-                  <div className="featured-image-fallback" style={{ background: `${category?.color}18` }}>
-                    {place.img}
-                  </div>
-                )}
-                <div className="featured-image-scrim" />
-                <span className="featured-badge">{category?.label}</span>
-              </div>
+              <PlacePhotoCarousel
+                photos={getPlacePhotoUrls(details)}
+                fallback={place.img}
+                alt={place.name}
+                badge={category?.label}
+                height={190}
+                radius={18}
+                className="featured-image-wrap"
+              />
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div>
                   <p className="featured-name">{details?.name || place.name}</p>
@@ -372,6 +582,7 @@ function TimelineWorkspace({
   timelineSource,
   placeDetailsById,
   me,
+  isHost,
   rosterCount,
   unreadTimelineCount,
   highlightedEventId,
@@ -379,6 +590,7 @@ function TimelineWorkspace({
   onPrevDay,
   onNextDay,
   onAddEvent,
+  onDeleteEvent,
   onVoteEvent,
   bindEventRef,
 }) {
@@ -431,6 +643,7 @@ function TimelineWorkspace({
             const myVote = event.votes?.[me];
             const summary = getTimelineVoteSummary(event, rosterCount);
             const eventKey = event.externalKey || event.id;
+            const canDelete = !event.locked && (isHost || event.createdBy === me);
 
             return (
               <div
@@ -444,33 +657,42 @@ function TimelineWorkspace({
                     <span className="timeline-time-divider" />
                     <span>{formatTimelineTime(event.endTime)}</span>
                   </div>
-                  <span
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      background: tone.background,
-                      color: tone.color,
-                      fontSize: 11,
-                      fontWeight: 800,
-                      letterSpacing: 1,
-                    }}
-                  >
-                    {tone.label}
-                  </span>
+                  <div className="timeline-event-actions">
+                    <span
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 999,
+                        background: tone.background,
+                        color: tone.color,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: 1,
+                      }}
+                    >
+                      {tone.label}
+                    </span>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        className="timeline-inline-action danger"
+                        onClick={() => onDeleteEvent(eventKey)}
+                      >
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 14, alignItems: "stretch" }}>
-                  {details?.photoUrl ? (
-                    <img
-                      src={details.photoUrl}
-                      alt={event.title}
-                      style={{ width: 92, height: 92, borderRadius: 18, objectFit: "cover", flexShrink: 0 }}
-                    />
-                  ) : (
-                    <div className="timeline-event-photo-fallback">
-                      {event.place?.emoji || "📍"}
-                    </div>
-                  )}
+                  <PlacePhotoCarousel
+                    photos={getPlacePhotoUrls(details)}
+                    fallback={event.place?.emoji || "📍"}
+                    alt={event.title}
+                    height={92}
+                    radius={18}
+                    className="timeline-event-media"
+                  />
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p className="timeline-event-title">{event.title}</p>
@@ -484,6 +706,11 @@ function TimelineWorkspace({
                       <p className="timeline-event-meta" style={{ marginTop: 8, color: "#cfcfcf" }}>
                         {event.notes}
                       </p>
+                    )}
+                    {event.place && (
+                      <div style={{ marginTop: 12 }}>
+                        <PlaceDetailChips place={event.place} details={details} compact />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -539,37 +766,63 @@ function TimelineComposer({
   placeDetailsById,
   onClose,
   onChangeTime,
-  onSelectCategory,
-  onSelectSubcategory,
+  onToggleCategory,
+  onToggleSubcategory,
   onSelectPlace,
-  onContinue,
+  onBackStep,
+  onContinueFromTime,
+  onContinueFromCategory,
+  onContinueFromSubcategory,
+  onViewAllPlaces,
   onCreate,
 }) {
   if (!open) return null;
 
-  const subcategoryOptions = flattenSubcategoryOptions(draft.category);
-  const placeOptions = draft.category
-    ? getSwipeablePlaces(draft.category, draft.subcategory ? [draft.subcategory] : [])
-    : [];
+  const selectedCategories = Array.isArray(draft.categories)
+    ? draft.categories
+    : (draft.category ? [draft.category] : []);
+  const selectedSubcategories = Array.isArray(draft.subcategories)
+    ? draft.subcategories
+    : (draft.subcategory ? [draft.subcategory] : []);
+  const subcategoryOptions = getTimelineSubcategoryOptions(selectedCategories);
+  const placeOptions = getTimelineBrowsePlaces(selectedCategories, selectedSubcategories);
   const activeDay = TRIP_DAYS.find((day) => day.day === draft.day) ?? TRIP_DAYS[0];
+  const stepTitles = {
+    time: "Pick a start time",
+    category: "Select categories",
+    subcategory: "Narrow the vibe",
+    place: "Browse matching places",
+  };
+  const canContinueCategory = selectedCategories.length > 0;
+  const canContinueSubcategory = selectedCategories.length > 0;
 
   return (
     <div className="composer-overlay">
       <div className="composer-sheet fade-up">
         <div className="composer-header">
-          <div>
+          <div style={{ flex: 1 }}>
             <p className="timeline-kicker">Add Event</p>
             <h3 className="syne" style={{ fontSize: 26 }}>
-              {draft.step === "time" && "Pick a start time"}
-              {draft.step === "category" && "Choose a category"}
-              {draft.step === "subcategory" && "Choose a subcategory"}
-              {draft.step === "place" && "Choose the place"}
+              {stepTitles[draft.step]}
             </h3>
+            {draft.step !== "time" && (
+              <p className="composer-subcopy">
+                Use the same stacked selection flow as the game, then pick one card to drop onto the timeline.
+              </p>
+            )}
           </div>
-          <button type="button" className="ghost-chip" onClick={onClose}>
-            <X size={14} />
-            Close
-          </button>
+          <div className="composer-header-actions">
+            {draft.step !== "time" && (
+              <button type="button" className="ghost-chip" onClick={onBackStep}>
+                <ChevronLeft size={14} />
+                Back
+              </button>
+            )}
+            <button type="button" className="ghost-chip" onClick={onClose}>
+              <X size={14} />
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="composer-progress">
@@ -594,7 +847,7 @@ function TimelineComposer({
               onChange={(event) => onChangeTime(event.target.value)}
               className="composer-time-input"
             />
-            <button type="button" className="solid-action" onClick={onContinue}>
+            <button type="button" className="solid-action" onClick={onContinueFromTime}>
               Continue
             </button>
           </div>
@@ -606,8 +859,8 @@ function TimelineComposer({
               <button
                 key={category.id}
                 type="button"
-                className="cat-btn"
-                onClick={() => onSelectCategory(category.id)}
+                className={`cat-btn ${selectedCategories.includes(category.id) ? "selected" : ""}`}
+                onClick={() => onToggleCategory(category.id)}
               >
                 <span
                   style={{
@@ -625,66 +878,117 @@ function TimelineComposer({
                   {category.emoji}
                 </span>
                 <span>{category.label}</span>
+                {selectedCategories.includes(category.id) && <Check size={20} style={{ marginLeft: "auto", color: "var(--green)" }} />}
               </button>
             ))}
+            <div className="composer-selection-row">
+              {selectedCategories.map((categoryId) => {
+                const category = CATEGORIES.find((item) => item.id === categoryId);
+
+                if (!category) return null;
+
+                return (
+                  <span key={categoryId} className="composer-pill">
+                    {category.emoji} {category.label}
+                  </span>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="solid-action"
+              disabled={!canContinueCategory}
+              onClick={onContinueFromCategory}
+            >
+              Continue to filters
+            </button>
+            <button type="button" className="ghost-chip composer-view-all" onClick={onViewAllPlaces}>
+              <Sparkles size={14} />
+              View all available places
+            </button>
           </div>
         )}
 
         {draft.step === "subcategory" && (
-          <div className="composer-grid">
-            {subcategoryOptions.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`composer-choice ${draft.subcategory === item.id ? "selected" : ""}`}
-                onClick={() => onSelectSubcategory(item.id)}
-              >
-                <span style={{ fontSize: 28 }}>{item.emoji}</span>
-                <span style={{ fontWeight: 700 }}>{item.label}</span>
-                <span style={{ color: "var(--td)", fontSize: 12, textTransform: "capitalize" }}>{item.group}</span>
-              </button>
-            ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {subcategoryOptions.length > 0 ? (
+              <div className="composer-grid">
+                {subcategoryOptions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`composer-choice ${selectedSubcategories.includes(item.id) ? "selected" : ""}`}
+                    onClick={() => onToggleSubcategory(item.id)}
+                  >
+                    <span style={{ fontSize: 28 }}>{item.emoji}</span>
+                    <span style={{ fontWeight: 700 }}>{item.label}</span>
+                    <span style={{ color: "var(--td)", fontSize: 12, textTransform: "capitalize" }}>{item.group}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="timeline-empty">No extra filters for these categories. Go straight to the place cards.</div>
+            )}
+            <div className="composer-selection-row">
+              {selectedSubcategories.length > 0 ? selectedSubcategories.map((subcategoryId) => {
+                const option = subcategoryOptions.find((item) => item.id === subcategoryId);
+                return option ? (
+                  <span key={subcategoryId} className="composer-pill">
+                    {option.emoji} {option.label}
+                  </span>
+                ) : null;
+              }) : (
+                <span className="composer-hint">No filter selected means show every place in the chosen categories.</span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="solid-action"
+              disabled={!canContinueSubcategory}
+              onClick={onContinueFromSubcategory}
+            >
+              Show place cards
+            </button>
           </div>
         )}
 
         {draft.step === "place" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {placeOptions.map((place) => {
+            <div className="composer-selection-row">
+              {selectedCategories.map((categoryId) => {
+                const category = CATEGORIES.find((item) => item.id === categoryId);
+
+                return category ? (
+                  <span key={categoryId} className="composer-pill">
+                    {category.emoji} {category.label}
+                  </span>
+                ) : null;
+              })}
+              {selectedSubcategories.map((subcategoryId) => {
+                const option = subcategoryOptions.find((item) => item.id === subcategoryId);
+                return option ? (
+                  <span key={subcategoryId} className="composer-pill subdued">
+                    {option.emoji} {option.label}
+                  </span>
+                ) : null;
+              })}
+            </div>
+            {placeOptions.length > 0 ? placeOptions.map((place) => {
               const details = placeDetailsById[place.id];
               const active = draft.placeId === place.id;
 
               return (
-                <button
+                <PlaceBrowseCard
                   key={place.id}
-                  type="button"
-                  className={`composer-place ${active ? "selected" : ""}`}
+                  place={place}
+                  details={details}
+                  selected={active}
                   onClick={() => onSelectPlace(place.id)}
-                >
-                  {details?.photoUrl ? (
-                    <img
-                      src={details.photoUrl}
-                      alt={place.name}
-                      style={{ width: 72, height: 72, borderRadius: 18, objectFit: "cover", flexShrink: 0 }}
-                    />
-                  ) : (
-                    <div className="timeline-event-photo-fallback" style={{ width: 72, height: 72, borderRadius: 18 }}>
-                      {place.img}
-                    </div>
-                  )}
-                  <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>{details?.name || place.name}</p>
-                    <p style={{ color: "var(--td)", fontSize: 12, lineHeight: 1.5 }}>
-                      {details?.editorialSummary || place.vibe}
-                    </p>
-                  </div>
-                  {active && (
-                    <div className="composer-place-check">
-                      <Check size={14} color="#07070c" />
-                    </div>
-                  )}
-                </button>
+                />
               );
-            })}
+            }) : (
+              <div className="timeline-empty">No places matched those filters. Go back and loosen the selection.</div>
+            )}
             <button
               type="button"
               className="solid-action"
@@ -695,6 +999,174 @@ function TimelineComposer({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PlacesLibrary({
+  places,
+  placeDetailsById,
+  selectedCategory,
+  suggestions,
+  onBack,
+  onOpenSuggest,
+  onSelectCategory,
+}) {
+  return (
+    <div className="app grain">
+      <div style={{ padding: "28px 20px 44px" }}>
+        <div className="timeline-workspace-header fade-up">
+          <button type="button" className="ghost-chip" onClick={onBack}>
+            <ChevronLeft size={16} />
+            Menu
+          </button>
+          <button type="button" className="ghost-chip" onClick={onOpenSuggest}>
+            <Plus size={16} />
+            Suggest place
+          </button>
+        </div>
+
+        <div className="lobby-hero fade-up">
+          <p className="timeline-kicker">All Places</p>
+          <h2 className="syne" style={{ fontSize: 30, marginBottom: 8 }}>Everything in the deck</h2>
+          <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.6 }}>
+            Browse the full set without swiping. Use this when you just want to see what is available before voting or adding something to the timeline.
+          </p>
+        </div>
+
+        <div className="featured-filter-row fade-up s1">
+          <button
+            type="button"
+            className={`featured-filter-btn ${selectedCategory === "all" ? "active" : ""}`}
+            onClick={() => onSelectCategory("all")}
+          >
+            <Sparkles size={14} />
+            All
+          </button>
+          {CATEGORIES.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              className={`featured-filter-btn ${selectedCategory === category.id ? "active" : ""}`}
+              onClick={() => onSelectCategory(category.id)}
+            >
+              <span>{category.emoji}</span>
+              {category.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="library-stack fade-up s2">
+          {places.map((place) => (
+            <PlaceBrowseCard
+              key={place.id}
+              place={place}
+              details={placeDetailsById[place.id]}
+              selected={false}
+              onClick={() => {
+                const mapUrl = placeDetailsById[place.id]?.googleMapsUri;
+
+                if (mapUrl) {
+                  window.open(mapUrl, "_blank", "noopener,noreferrer");
+                }
+              }}
+            />
+          ))}
+        </div>
+
+        <div className="timeline-panel fade-up s3">
+          <div className="timeline-panel-head">
+            <div>
+              <p className="timeline-kicker">User Suggestions</p>
+              <h3 className="syne" style={{ fontSize: 20 }}>Saved for future deck updates</h3>
+            </div>
+          </div>
+          <p style={{ color: "var(--td)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+            New place ideas get stored in Supabase. On a future pass I can review the pending entries, add the real ones to the main deck, and skip the bad ones without polluting the live cards.
+          </p>
+          {suggestions.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {suggestions.map((suggestion) => (
+                <div key={suggestion.id} className="suggestion-card">
+                  <div>
+                    <p className="browse-place-title" style={{ fontSize: 16 }}>{suggestion.name}</p>
+                    <p className="browse-place-meta">
+                      {suggestion.category} {suggestion.area ? `· ${suggestion.area}` : ""} · submitted by {suggestion.submitted_by}
+                    </p>
+                    {suggestion.notes && <p className="browse-place-description" style={{ marginTop: 8 }}>{suggestion.notes}</p>}
+                  </div>
+                  <span className={`suggestion-status ${suggestion.status}`}>{suggestion.status}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="timeline-empty">No saved suggestions yet. Use the button above to add one.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CustomPlaceComposer({ open, draft, saving, onChange, onClose, onSubmit }) {
+  if (!open) return null;
+
+  return (
+    <div className="composer-overlay">
+      <div className="composer-sheet fade-up">
+        <div className="composer-header">
+          <div style={{ flex: 1 }}>
+            <p className="timeline-kicker">Suggest A Place</p>
+            <h3 className="syne" style={{ fontSize: 26 }}>Store a custom idea</h3>
+            <p className="composer-subcopy">
+              This saves the suggestion to Supabase so I can review it later and add only the real, useful ones to the main deck.
+            </p>
+          </div>
+          <button type="button" className="ghost-chip" onClick={onClose}>
+            <X size={14} />
+            Close
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(event) => onChange("name", event.target.value)}
+            placeholder="Place name"
+            className="composer-text-input"
+          />
+          <div className="composer-grid">
+            {CATEGORIES.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                className={`composer-choice ${draft.category === category.id ? "selected" : ""}`}
+                onClick={() => onChange("category", category.id)}
+              >
+                <span style={{ fontSize: 28 }}>{category.emoji}</span>
+                <span style={{ fontWeight: 700 }}>{category.label}</span>
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={draft.area}
+            onChange={(event) => onChange("area", event.target.value)}
+            placeholder="Area / neighbourhood (optional)"
+            className="composer-text-input"
+          />
+          <textarea
+            value={draft.notes}
+            onChange={(event) => onChange("notes", event.target.value)}
+            placeholder="Why it fits the trip, branch name, or anything useful"
+            className="composer-textarea"
+          />
+          <button type="button" className="solid-action" disabled={saving || !draft.name.trim()} onClick={onSubmit}>
+            {saving ? "Saving..." : "Save suggestion"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -909,6 +1381,8 @@ export default function App() {
   const [pinInput, setPinInput] = useState("");
   const [joinError, setJoinError] = useState("");
   const [activePanel, setActivePanel] = useState("menu");
+  const [featuredCategory, setFeaturedCategory] = useState("activity");
+  const [libraryCategory, setLibraryCategory] = useState("all");
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
   const [subcatRight, setSubcatRight] = useState([]);
@@ -930,6 +1404,15 @@ export default function App() {
   const [notice, setNotice] = useState(null);
   const [unreadTimelineCount, setUnreadTimelineCount] = useState(0);
   const [rouletteCursor, setRouletteCursor] = useState(0);
+  const [customPlaceComposerOpen, setCustomPlaceComposerOpen] = useState(false);
+  const [customPlaceSaving, setCustomPlaceSaving] = useState(false);
+  const [customPlaceSuggestions, setCustomPlaceSuggestions] = useState([]);
+  const [customPlaceDraft, setCustomPlaceDraft] = useState({
+    name: "",
+    category: "food",
+    area: "",
+    notes: "",
+  });
 
   const timerRef = useRef(null);
   const noticeTimerRef = useRef(null);
@@ -942,6 +1425,15 @@ export default function App() {
   const testMode = room.isTestMode === true;
   const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
+  const allBrowseablePlaces = getAllPlaces().filter((place) => place.swipeEligible && !place.locked);
+  const featuredPlaces = getPlacesByCategory(featuredCategory, { includeLocked: false })
+    .filter((place) => place.swipeEligible)
+    .slice(0, 6);
+  const availablePlaces = (
+    libraryCategory === "all"
+      ? allBrowseablePlaces
+      : getPlacesByCategory(libraryCategory, { includeLocked: false })
+  ).filter((place) => place.swipeEligible && !place.locked);
   const mergedTimelineEvents = mergeTimelineCollections(baseTimelineEvents, room.timelineEvents, displayPlayers.length);
   const timelineDays = getTimelineDays(mergedTimelineEvents);
   const timelinePlaces = mergedTimelineEvents.map((event) => event.place).filter(Boolean);
@@ -990,6 +1482,13 @@ export default function App() {
     setTimelineDraft(createEmptyTimelineDraft(TRIP_DAYS[0].day));
     setHighlightedEventId(null);
     setRouletteCursor(0);
+    setCustomPlaceComposerOpen(false);
+    setCustomPlaceDraft({
+      name: "",
+      category: "food",
+      area: "",
+      notes: "",
+    });
 
     if (!preserveIdentity) {
       setMe(null);
@@ -1006,7 +1505,8 @@ export default function App() {
 
   useEffect(() => {
     const placesToHydrate = Array.from(new Map([
-      ...FEATURED_PLACES.map((place) => [place.id, place]),
+      ...featuredPlaces.map((place) => [place.id, place]),
+      ...(activePanel === "places" ? availablePlaces.map((place) => [place.id, place]) : []),
       ...timelinePlaces.map((place) => [place.id, place]),
       ...placeCards.map((place) => [place.id, place]),
       ...(room.finalOptions || []).map((placeId) => {
@@ -1049,7 +1549,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [placeCards, placeDetailsById, room.decidedPlace, room.finalOptions, timelinePlaces, userLocation]);
+  }, [activePanel, availablePlaces, featuredPlaces, placeCards, placeDetailsById, room.decidedPlace, room.finalOptions, timelinePlaces, userLocation]);
 
   useEffect(() => {
     if (!me || typeof navigator === "undefined" || !navigator.geolocation || locationStatus !== "idle") {
@@ -1074,6 +1574,28 @@ export default function App() {
       }
     );
   }, [locationStatus, me]);
+
+  useEffect(() => {
+    if (!me) {
+      setCustomPlaceSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    void listCustomPlaces()
+      .then((rows) => {
+        if (cancelled) return;
+        setCustomPlaceSuggestions(rows);
+      })
+      .catch((error) => {
+        console.warn("Failed to load custom place suggestions.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [me]);
 
   useEffect(() => {
     if (!lobby.wasReset || resettingRoomRef.current) return;
@@ -1614,16 +2136,19 @@ export default function App() {
     const winner = sorted[0]?.[1] >= majority ? sorted[0][0] : null;
 
     if (winner) {
+      const nextSubcatCards = buildSubcatCards(winner);
+      const shouldUseSubcategories = nextSubcatCards.length > 0;
+
       await update((current) => ({
         ...current,
         winningCategory: winner,
-        phase: winner === "activity" ? "place_swipe" : "subcat_swipe",
+        phase: shouldUseSubcategories ? "subcat_swipe" : "place_swipe",
         subcatSwipes: {},
         placeSwipes: {},
       }));
 
-      if (winner !== "activity") {
-        setSubcatCards(buildSubcatCards(winner));
+      if (shouldUseSubcategories) {
+        setSubcatCards(nextSubcatCards);
         setSubcatRight([]);
         setSubcatDone(false);
       } else {
@@ -1947,14 +2472,61 @@ export default function App() {
     setTimelineComposerOpen(true);
   };
 
+  const handleTimelineDraftBack = () => {
+    const selectedCategories = Array.isArray(timelineDraft.categories) ? timelineDraft.categories : [];
+    const hasSubcategoryStep = getTimelineSubcategoryOptions(selectedCategories).length > 0;
+
+    setTimelineDraft((current) => {
+      if (current.step === "place") {
+        return {
+          ...current,
+          step: hasSubcategoryStep ? "subcategory" : "category",
+          placeId: null,
+        };
+      }
+
+      if (current.step === "subcategory") {
+        return {
+          ...current,
+          step: "category",
+          subcategories: [],
+          subcategory: null,
+          placeId: null,
+        };
+      }
+
+      if (current.step === "category") {
+        return {
+          ...current,
+          step: "time",
+        };
+      }
+
+      return current;
+    });
+  };
+
+  const handleViewAllTimelinePlaces = () => {
+    setTimelineDraft((current) => ({
+      ...current,
+      categories: CATEGORIES.map((category) => category.id),
+      category: null,
+      subcategories: [],
+      subcategory: null,
+      placeId: null,
+      step: "place",
+    }));
+  };
+
   const handleCreateTimelineEvent = async () => {
     if (!timelineDraft.placeId || !me) return;
+    const selectedPlace = getPlaceById(timelineDraft.placeId);
 
     const event = createTimelineEventDraft({
       day: timelineDraft.day,
       time: timelineDraft.time,
-      category: timelineDraft.category,
-      subcategory: timelineDraft.subcategory,
+      category: selectedPlace?.cat ?? timelineDraft.categories?.[0] ?? timelineDraft.category,
+      subcategory: selectedPlace?.subcategory ?? timelineDraft.subcategories?.[0] ?? timelineDraft.subcategory,
       placeId: timelineDraft.placeId,
       createdBy: me,
     });
@@ -1979,6 +2551,31 @@ export default function App() {
         void simulateTestTimelineVotes(event.externalKey);
       }, 550);
     }
+  };
+
+  const handleDeleteTimelineEvent = async (eventId) => {
+    const eventToDelete = mergedTimelineEvents.find((event) => (event.externalKey || event.id) === eventId);
+
+    if (!eventToDelete || eventToDelete.locked) return;
+    if (!window.confirm(`Delete ${eventToDelete.placeName} from the timeline?`)) return;
+
+    await update((current) => ({
+      ...current,
+      timelineEvents: normalizeTimelineEvents(
+        current.timelineEvents.filter((event) => (event.externalKey || event.id) !== eventId),
+        displayPlayers.length
+      ),
+    }));
+
+    if (highlightedEventId === eventId) {
+      setHighlightedEventId(null);
+    }
+
+    showNotice({
+      tone: "warning",
+      kicker: "Event deleted",
+      message: `${eventToDelete.placeName} was removed from the timeline.`,
+    });
   };
 
   const handleVoteTimelineEvent = async (eventId, vote) => {
@@ -2008,6 +2605,42 @@ export default function App() {
       window.setTimeout(() => {
         void simulateTestTimelineVotes(eventId);
       }, 450);
+    }
+  };
+
+  const handleSubmitCustomPlace = async () => {
+    if (!me || !customPlaceDraft.name.trim()) return;
+
+    setCustomPlaceSaving(true);
+
+    try {
+      const savedPlace = await submitCustomPlaceSuggestion({
+        ...customPlaceDraft,
+        submittedBy: me,
+      });
+
+      setCustomPlaceSuggestions((current) => [savedPlace, ...current].slice(0, 20));
+      setCustomPlaceDraft({
+        name: "",
+        category: customPlaceDraft.category,
+        area: "",
+        notes: "",
+      });
+      setCustomPlaceComposerOpen(false);
+      showNotice({
+        tone: "success",
+        kicker: "Suggestion saved",
+        message: `${savedPlace.name} is stored for the next deck review.`,
+      });
+    } catch (error) {
+      console.error("Failed to save custom place suggestion.", error);
+      showNotice({
+        tone: "warning",
+        kicker: "Save failed",
+        message: "Custom place storage is unavailable right now. Run the latest Supabase migration and try again.",
+      });
+    } finally {
+      setCustomPlaceSaving(false);
     }
   };
 
@@ -2154,6 +2787,7 @@ export default function App() {
           timelineSource={timelineSourceLabel}
           placeDetailsById={placeDetailsById}
           me={me}
+          isHost={isHost}
           rosterCount={displayPlayers.length}
           unreadTimelineCount={unreadTimelineCount}
           highlightedEventId={highlightedEventId}
@@ -2164,6 +2798,7 @@ export default function App() {
           onPrevDay={() => setTimelineDayIndex((current) => Math.max(0, current - 1))}
           onNextDay={() => setTimelineDayIndex((current) => Math.min(timelineDays.length - 1, current + 1))}
           onAddEvent={openTimelineComposer}
+          onDeleteEvent={handleDeleteTimelineEvent}
           onVoteEvent={handleVoteTimelineEvent}
           bindEventRef={bindEventRef}
         />
@@ -2173,28 +2808,75 @@ export default function App() {
           placeDetailsById={placeDetailsById}
           onClose={() => setTimelineComposerOpen(false)}
           onChangeTime={(time) => setTimelineDraft((current) => ({ ...current, time }))}
-          onSelectCategory={(category) => {
-            const options = flattenSubcategoryOptions(category);
+          onToggleCategory={(categoryId) => {
+            setTimelineDraft((current) => {
+              const categories = toggleSelection(current.categories || [], categoryId);
+              const availableSubcategories = new Set(getTimelineSubcategoryOptions(categories).map((item) => item.id));
+              const subcategories = (current.subcategories || []).filter((subcategoryId) => availableSubcategories.has(subcategoryId));
 
+              return {
+                ...current,
+                categories,
+                category: null,
+                subcategories,
+                subcategory: null,
+                placeId: null,
+              };
+            });
+          }}
+          onToggleSubcategory={(subcategoryId) => {
             setTimelineDraft((current) => ({
               ...current,
-              category,
+              subcategories: toggleSelection(current.subcategories || [], subcategoryId),
               subcategory: null,
               placeId: null,
-              step: options.length > 0 ? "subcategory" : "place",
-            }));
-          }}
-          onSelectSubcategory={(subcategory) => {
-            setTimelineDraft((current) => ({
-              ...current,
-              subcategory,
-              placeId: null,
-              step: "place",
             }));
           }}
           onSelectPlace={(placeId) => setTimelineDraft((current) => ({ ...current, placeId }))}
-          onContinue={() => setTimelineDraft((current) => ({ ...current, step: "category" }))}
+          onBackStep={handleTimelineDraftBack}
+          onContinueFromTime={() => setTimelineDraft((current) => ({ ...current, step: "category" }))}
+          onContinueFromCategory={() => {
+            setTimelineDraft((current) => ({
+              ...current,
+              step: getTimelineSubcategoryOptions(current.categories || []).length > 0 ? "subcategory" : "place",
+            }));
+          }}
+          onContinueFromSubcategory={() => setTimelineDraft((current) => ({ ...current, step: "place" }))}
+          onViewAllPlaces={handleViewAllTimelinePlaces}
           onCreate={handleCreateTimelineEvent}
+        />
+      </>
+    );
+  }
+
+  if (room.phase === "lobby" && activePanel === "places") {
+    return (
+      <>
+        <NoticeBanner
+          notice={notice}
+          onClick={() => {
+            if (notice?.eventId) {
+              jumpToTimelineEvent(notice.eventId);
+            }
+          }}
+          onClose={() => setNotice(null)}
+        />
+        <PlacesLibrary
+          places={availablePlaces}
+          placeDetailsById={placeDetailsById}
+          selectedCategory={libraryCategory}
+          suggestions={customPlaceSuggestions}
+          onBack={() => setActivePanel("menu")}
+          onOpenSuggest={() => setCustomPlaceComposerOpen(true)}
+          onSelectCategory={setLibraryCategory}
+        />
+        <CustomPlaceComposer
+          open={customPlaceComposerOpen}
+          draft={customPlaceDraft}
+          saving={customPlaceSaving}
+          onChange={(field, value) => setCustomPlaceDraft((current) => ({ ...current, [field]: value }))}
+          onClose={() => setCustomPlaceComposerOpen(false)}
+          onSubmit={handleSubmitCustomPlace}
         />
       </>
     );
@@ -2329,6 +3011,14 @@ export default function App() {
                 setUnreadTimelineCount(0);
               }}
             />
+            <MenuActionCard
+              icon={<MapPin size={22} />}
+              title="All places"
+              copy="Open the full curated library, browse every available card, and save extra suggestions for later review."
+              meta={`${allBrowseablePlaces.length} visible places · shared deck`}
+              accent="var(--purple)"
+              onClick={() => setActivePanel("places")}
+            />
           </div>
 
           <div className="menu-info-strip fade-up s2">
@@ -2338,7 +3028,7 @@ export default function App() {
             </div>
             <div className="menu-info-pill">
               <Navigation size={14} />
-              <span>{locationStatus === "ready" ? "Live location on" : "Using Dubai city center"}</span>
+              <span>{locationStatus === "ready" ? "Live location on" : "Using FIVE Palm fallback"}</span>
             </div>
             <div className="menu-info-pill">
               <MapPin size={14} />
@@ -2357,7 +3047,12 @@ export default function App() {
           </div>
 
           <TimelinePreviewPanel timelineDays={timelineDays} timelineSource={timelineSourceLabel} placeDetailsById={placeDetailsById} />
-          <FeaturedPlacesRail places={FEATURED_PLACES} placeDetailsById={placeDetailsById} />
+          <FeaturedPlacesRail
+            places={featuredPlaces}
+            placeDetailsById={placeDetailsById}
+            selectedCategory={featuredCategory}
+            onSelectCategory={setFeaturedCategory}
+          />
         </div>
       </div>
     );
@@ -2604,52 +3299,24 @@ export default function App() {
               maxSwipes={MAX_PLACE_SWIPES}
               renderCard={(place) => {
                 const details = placeDetailsById[place.id];
-                const busyness = describeBusyness(details?.currentBusyness);
+                const categoryBadge = category?.label;
 
                 return (
-                  <div style={{ height: "100%", display: "flex", flexDirection: "column", padding: 24, justifyContent: "space-between", background: "var(--bg)" }}>
+                  <div className="swipe-place-card">
                     <div>
-                      <div style={{ width: "100%", height: 170, borderRadius: 16, overflow: "hidden", background: `linear-gradient(135deg, ${category?.color}22, ${category?.color}08)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, marginBottom: 16, position: "relative" }}>
-                        {details?.photoUrl ? (
-                          <img src={details.photoUrl} alt={place.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        ) : (
-                          <span>{place.img}</span>
-                        )}
-                        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(7,7,12,0.05), rgba(7,7,12,0.55))" }} />
-                        <div style={{ position: "absolute", left: 14, top: 14, padding: "6px 10px", borderRadius: 999, background: "rgba(7,7,12,0.68)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1.2 }}>
-                          {category?.label}
-                        </div>
-                      </div>
-                      <h3 className="syne" style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{details?.name || place.name}</h3>
-                      <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.5, marginBottom: 10 }}>{details?.editorialSummary || place.vibe}</p>
-                      {details?.formattedAddress && <p style={{ color: "#cfcfcf", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>{details.formattedAddress}</p>}
+                      <PlacePhotoCarousel
+                        photos={getPlacePhotoUrls(details)}
+                        fallback={place.img}
+                        alt={place.name}
+                        badge={categoryBadge}
+                        height={188}
+                        radius={18}
+                      />
+                      <h3 className="swipe-place-title">{details?.name || place.name}</h3>
+                      <p className="swipe-place-description">{details?.editorialSummary || place.vibe}</p>
+                      {details?.formattedAddress && <p className="swipe-place-address">{details.formattedAddress}</p>}
                     </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--gd)", color: "var(--gold)", fontSize: 14, fontWeight: 700 }}>
-                        {"$".repeat(details?.priceLevel || place.cost)}
-                      </span>
-                      <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--sh)", color: "var(--td)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
-                        <Star size={12} /> {(details?.rating || place.rating).toFixed(1)}
-                      </span>
-                      <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--s)", color: "#c9c9c9", fontSize: 12 }}>
-                        {formatDistance(details?.distanceMeters)}
-                      </span>
-                      {busyness && (
-                        <span style={{ padding: "6px 12px", borderRadius: 8, background: busyness.background, color: busyness.tone, fontSize: 12, fontWeight: 700 }}>
-                          {busyness.label}
-                        </span>
-                      )}
-                      {place.displayTags?.map((tag) => (
-                        <span key={tag} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--s)", color: "#aaa", fontSize: 12 }}>
-                          {tag}
-                        </span>
-                      ))}
-                      {details?.topDishes?.slice(0, 2).map((dish) => (
-                        <span key={dish} style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(255,255,255,0.04)", color: "#d6d6d6", fontSize: 12 }}>
-                          {dish}
-                        </span>
-                      ))}
-                    </div>
+                    <PlaceDetailChips place={place} details={details} />
                   </div>
                 );
               }}
@@ -2783,11 +3450,14 @@ export default function App() {
                   className={`final-option ${isSelected ? "sel" : ""} ${disabled && !isSelected ? "dis" : ""}`}
                   onClick={() => !disabled && toggleFinal(placeId)}
                 >
-                  {details?.photoUrl ? (
-                    <img src={details.photoUrl} alt={place.name} style={{ width: 56, height: 56, borderRadius: 16, objectFit: "cover", flexShrink: 0 }} />
-                  ) : (
-                    <span style={{ fontSize: 28 }}>{place.img}</span>
-                  )}
+                  <PlacePhotoCarousel
+                    photos={getPlacePhotoUrls(details)}
+                    fallback={place.img}
+                    alt={place.name}
+                    height={64}
+                    radius={16}
+                    className="final-option-media"
+                  />
                   <div style={{ flex: 1 }}>
                     <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{details?.name || place.name}</p>
                     <p style={{ color: "var(--td)", fontSize: 12, marginBottom: 6 }}>{details?.editorialSummary || place.vibe}</p>
@@ -2871,16 +3541,14 @@ export default function App() {
     return (
       <div className="app grain">
         <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, textAlign: "center" }}>
-          {details?.photoUrl ? (
-            <div className="bounce-in" style={{ width: "100%", maxWidth: 360, height: 240, borderRadius: 26, overflow: "hidden", marginBottom: 24, position: "relative", border: "1px solid var(--bl)" }}>
-              <img src={details.photoUrl} alt={place?.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(7,7,12,0.05), rgba(7,7,12,0.4))" }} />
-            </div>
-          ) : (
-            <div className="bounce-in" style={{ width: 100, height: 100, borderRadius: "50%", background: "var(--gd)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48, marginBottom: 24, border: "2px solid rgba(240,168,48,0.3)" }}>
-              {place?.img || "🎉"}
-            </div>
-          )}
+          <PlacePhotoCarousel
+            photos={getPlacePhotoUrls(details)}
+            fallback={place?.img || "🎉"}
+            alt={place?.name || "Decided place"}
+            height={240}
+            radius={26}
+            className="decided-media bounce-in"
+          />
           <p className="fade-up s1" style={{ color: "var(--gold)", fontSize: 12, fontWeight: 600, letterSpacing: 3, marginBottom: 8 }}>IT IS DECIDED</p>
           <h1 className="syne fade-up s2" style={{ fontSize: 36, fontWeight: 800, marginBottom: 8 }}>{details?.name || place?.name}</h1>
           <p className="fade-up s3" style={{ color: "var(--td)", fontSize: 15, marginBottom: 4 }}>{details?.editorialSummary || place?.vibe}</p>

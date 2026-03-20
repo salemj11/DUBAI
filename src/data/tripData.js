@@ -104,6 +104,7 @@ export const SUBCATEGORIES = {
       { id: 'coffee', label: 'Coffee', emoji: '☕' },
       { id: 'design', label: 'Design Scene', emoji: '🖼️' },
       { id: 'beach-club', label: 'Beach Club', emoji: '🏖️' },
+      { id: 'pool', label: 'Pool Day', emoji: '🏊' },
       { id: 'nightlife', label: 'Nightlife', emoji: '🎶' },
       { id: 'rooftop', label: 'Rooftop', emoji: '🌃' },
       { id: 'lounge', label: 'Lounge', emoji: '🥂' },
@@ -115,6 +116,28 @@ export const SUBCATEGORIES = {
       { id: 'marina', label: 'Marina', emoji: '⛵' },
       { id: 'jumeirah', label: 'Jumeirah', emoji: '🏖️' },
       { id: 'difc', label: 'DIFC', emoji: '💼' },
+    ],
+  },
+  activity: {
+    format: [
+      { id: 'competitive-social', label: 'Competitive', emoji: '🏁' },
+      { id: 'immersive-social', label: 'Immersive', emoji: '🪩' },
+      { id: 'fitness', label: 'Fitness', emoji: '🏃' },
+      { id: 'nightlife-social', label: 'Late Night', emoji: '🎧' },
+    ],
+    location: [
+      { id: 'alserkal', label: 'Alserkal / Al Quoz', emoji: '🎨' },
+      { id: 'jbr', label: 'JBR', emoji: '🌴' },
+      { id: 'bluewaters', label: 'Bluewaters', emoji: '🎡' },
+      { id: 'palm', label: 'Palm', emoji: '🌊' },
+      { id: 'difc', label: 'DIFC', emoji: '💼' },
+      { id: 'downtown', label: 'Downtown', emoji: '🏙️' },
+    ],
+    vibe: [
+      { id: 'high-energy', label: 'High Energy', emoji: '⚡' },
+      { id: 'group', label: 'Group Ready', emoji: '👥' },
+      { id: 'late-night', label: 'Late Night', emoji: '🌙' },
+      { id: 'design-forward', label: 'Polished', emoji: '✨' },
     ],
   },
 }
@@ -517,6 +540,72 @@ const PLACE_CATALOG = [
     googleQuery: 'Kinoya Dubai',
   }),
   definePlace({
+    id: 'lana-lusa',
+    slug: 'lana-lusa',
+    name: 'Lana Lusa',
+    emoji: '🍷',
+    category: 'food',
+    subcategory: 'smart-casual',
+    area: 'Wasl 51',
+    description: 'One of the cleaner stylish-group dinner moves from the recent Dubai lists: lively, good-looking, and not trapped in tasting-menu energy.',
+    tags: ['contemporary', 'jumeirah', 'casual'],
+    vibeTags: ['stylish', 'buzzy', 'group-dinner'],
+    priceLevel: 3,
+    sourceConfidence: 'curated',
+    rating: 4.5,
+    googleQuery: 'Lana Lusa Dubai',
+    branchOptions: ['Wasl 51', 'Four Seasons DIFC'],
+  }),
+  definePlace({
+    id: 'the-lighthouse',
+    slug: 'the-lighthouse',
+    name: 'The Lighthouse',
+    emoji: '💡',
+    category: 'food',
+    subcategory: 'design-forward-casual',
+    area: 'Dubai Design District',
+    description: 'Design-forward and easy to rally around, with enough food credibility to earn a slot without turning into a formal mission.',
+    tags: ['contemporary', 'design-forward', 'casual'],
+    vibeTags: ['design-forward', 'all-day', 'current'],
+    priceLevel: 3,
+    sourceConfidence: 'curated',
+    rating: 4.4,
+    googleQuery: 'The Lighthouse Dubai Design District',
+    branchOptions: ['Dubai Design District', 'Mall of the Emirates'],
+  }),
+  definePlace({
+    id: 'canary-club',
+    slug: 'canary-club',
+    name: 'Canary Club',
+    emoji: '🍸',
+    category: 'food',
+    subcategory: 'smart-casual',
+    area: 'JLT',
+    description: 'A current, cocktail-friendly dinner option that keeps the mood social and a little dressed up without going full white-tablecloth.',
+    tags: ['contemporary', 'jlt', 'late-night'],
+    vibeTags: ['cocktails', 'social', 'current'],
+    priceLevel: 3,
+    sourceConfidence: 'curated',
+    rating: 4.4,
+    googleQuery: 'Canary Club Dubai',
+  }),
+  definePlace({
+    id: 'lila-molino-cafe',
+    slug: 'lila-molino-cafe',
+    name: 'Lila Molino + Cafe',
+    emoji: '🌽',
+    category: 'food',
+    subcategory: 'casual-hype',
+    area: 'Jumeirah',
+    description: 'More all-day than the taqueria entry, but still stylish, current, and clearly on the same Salem-coded food lane.',
+    tags: ['mexican', 'jumeirah', 'casual'],
+    vibeTags: ['all-day', 'stylish', 'easy-win'],
+    priceLevel: 2,
+    sourceConfidence: 'curated',
+    rating: 4.5,
+    googleQuery: 'Lila Molino and Cafe Dubai',
+  }),
+  definePlace({
     id: 'carbone-dubai',
     slug: 'carbone-dubai',
     name: 'Carbone Dubai',
@@ -553,6 +642,87 @@ const PLACE_CATALOG = [
     rating: 4.7,
     googlePlaceId: 'ChIJDf8AOQBpXz4R_v89QRy0rus',
     googleQuery: 'Gooder Alserkal Dubai',
+    featured: true,
+  }),
+  definePlace({
+    id: 'folder-cafe',
+    slug: 'folder-cafe',
+    name: 'Folder Cafe',
+    emoji: '📁',
+    category: 'chill',
+    subcategory: 'design-cafe',
+    area: 'Al Wasl',
+    description: 'A clean-lined cafe stop with current crowd energy, better for a chill reset than a generic coffee chain detour.',
+    tags: ['coffee', 'design', 'jumeirah'],
+    vibeTags: ['clean-lines', 'current', 'cool-crowd'],
+    priceLevel: 2,
+    sourceConfidence: 'needs_review',
+    rating: 4.5,
+    googleQuery: 'Folder Cafe Dubai',
+  }),
+  definePlace({
+    id: 'nightjar-coffee-roasters',
+    slug: 'nightjar-coffee-roasters',
+    name: 'Nightjar Coffee Roasters',
+    emoji: '🫘',
+    category: 'chill',
+    subcategory: 'design-cafe',
+    area: 'Alserkal Avenue',
+    description: 'Buzzy Alserkal coffee energy that actually fits the trip taste profile instead of feeling like a random filler cafe.',
+    tags: ['coffee', 'design', 'alserkal'],
+    vibeTags: ['creative', 'buzzy', 'warehouse-cool'],
+    priceLevel: 2,
+    sourceConfidence: 'curated',
+    rating: 4.6,
+    googleQuery: 'Nightjar Coffee Roasters Dubai',
+  }),
+  definePlace({
+    id: 'orijins',
+    slug: 'orijins',
+    name: 'Orijins',
+    emoji: '🌿',
+    category: 'chill',
+    subcategory: 'design-cafe',
+    area: 'Jumeirah',
+    description: 'A polished coffee-and-reset stop that still feels taste-driven and current enough for this weekend deck.',
+    tags: ['coffee', 'design', 'jumeirah'],
+    vibeTags: ['minimal', 'polished', 'day-reset'],
+    priceLevel: 2,
+    sourceConfidence: 'needs_review',
+    rating: 4.5,
+    googleQuery: 'Orijins Dubai',
+  }),
+  definePlace({
+    id: 'bkry',
+    slug: 'bkry',
+    name: 'bkry',
+    emoji: '🥐',
+    category: 'chill',
+    subcategory: 'design-cafe',
+    area: 'Alserkal Avenue',
+    description: 'More bakery-leaning than straight coffee, but the crowd and design language still make it a strong chill-card addition.',
+    tags: ['coffee', 'design', 'alserkal'],
+    vibeTags: ['bakery-run', 'current', 'creative'],
+    priceLevel: 2,
+    sourceConfidence: 'curated',
+    rating: 4.6,
+    googleQuery: 'bkry Dubai',
+  }),
+  definePlace({
+    id: 'five-palm-pool',
+    slug: 'five-palm-pool',
+    name: 'FIVE Palm Pool',
+    emoji: '🏝️',
+    category: 'chill',
+    subcategory: 'beach-lounge',
+    area: 'FIVE Palm Jumeirah',
+    description: 'Straight-up Palm pool-day energy when the group wants sun, music, and a scene instead of a quiet lounge.',
+    tags: ['pool', 'palm', 'beach-club'],
+    vibeTags: ['pool-day', 'music', 'Palm'],
+    priceLevel: 4,
+    sourceConfidence: 'curated',
+    rating: 4.5,
+    googleQuery: 'Beach by FIVE Dubai',
     featured: true,
   }),
   definePlace({
@@ -706,20 +876,17 @@ const PLACE_CATALOG = [
     slug: 'pacha-icons',
     name: 'Pacha Icons',
     emoji: '🎧',
-    category: 'chill',
-    subcategory: 'nightlife-lounge',
+    category: 'activity',
+    subcategory: 'nightlife-social',
     area: 'FIVE LUXE, JBR',
-    description: 'A locked late-night anchor for the weekend. It belongs on the plan, not in a swipe tiebreak.',
-    tags: ['nightlife', 'jbr', 'lounge'],
-    vibeTags: ['booked', 'music-led', 'late-night'],
+    description: 'Late-night music-led energy that belongs in the activity deck now, not pre-locked onto the trip.',
+    tags: ['nightlife-social', 'jbr', 'late-night'],
+    vibeTags: ['music-led', 'late-night', 'crowd'],
     priceLevel: 4,
-    bookingStatus: 'booked',
     sourceConfidence: 'confirmed',
     rating: 3.8,
     googlePlaceId: 'ChIJe1IjpLoVXz4RffunlN_1AaU',
     googleQuery: 'Pacha Icons Dubai',
-    swipeEligible: false,
-    locked: true,
     featured: true,
   }),
   definePlace({
@@ -730,32 +897,18 @@ const PLACE_CATALOG = [
     category: 'chill',
     subcategory: 'nightlife-lounge',
     area: 'Dubai',
-    description: 'User-confirmed nightlife plan. The naming looks like an event collab, so it stays locked and marked for review rather than guessed at.',
+    description: 'A loose late-night event card for the deck instead of a locked reservation, best treated as an after-midnight move.',
     tags: ['nightlife', 'late-night', 'lounge'],
-    vibeTags: ['booked', 'music-led', 'event-night'],
+    vibeTags: ['music-led', 'event-night', 'after-hours'],
     priceLevel: 3,
-    bookingStatus: 'booked',
     sourceConfidence: 'needs_review',
     rating: 4.5,
     googleQuery: 'Helipad House of Yanos Jerk Jollof Dubai',
-    swipeEligible: false,
-    locked: true,
-    notes: 'Kept hidden from swipe mode because this looks like a one-off event title rather than a stable venue listing.',
+    notes: 'Treat this as a flexible late-night option around 00:30-01:00 rather than a locked Friday reservation.',
   }),
 ]
 
 const LOCKED_TIMELINE_EVENTS = [
-  defineLockedEvent({
-    id: 'locked-helipad-20260320-2000',
-    title: 'Helipad House Of Yanos X Jerk X Jollof',
-    day: '2026-03-20',
-    startTime: '2026-03-20T20:00:00+04:00',
-    endTime: '2026-03-20T22:00:00+04:00',
-    category: 'chill',
-    subcategory: 'nightlife-lounge',
-    placeId: 'helipad-house-of-yanos',
-    notes: 'User-confirmed Friday night plan.',
-  }),
   defineLockedEvent({
     id: 'locked-topgolf-20260320-2215',
     title: 'Topgolf Dubai',
@@ -789,17 +942,6 @@ const LOCKED_TIMELINE_EVENTS = [
     placeId: 'carbone-dubai',
     notes: 'User-confirmed Saturday dinner booking.',
   }),
-  defineLockedEvent({
-    id: 'locked-pacha-20260321-2330',
-    title: 'Pacha Icons',
-    day: '2026-03-21',
-    startTime: '2026-03-21T23:30:00+04:00',
-    endTime: '2026-03-22T03:00:00+04:00',
-    category: 'chill',
-    subcategory: 'nightlife-lounge',
-    placeId: 'pacha-icons',
-    notes: 'Late-night arrival after Carbone.',
-  }),
 ]
 
 function sortByFeaturedThenRating(left, right) {
@@ -821,7 +963,7 @@ function toCardPlace(place) {
     cost: place.priceLevel,
     vibe: place.description,
     img: place.emoji,
-    displayTags: [place.area, ...place.vibeTags].filter(Boolean).slice(0, 3),
+    displayTags: Array.from(new Set([place.area, ...place.vibeTags].filter(Boolean))).slice(0, 3),
   }
 }
 
@@ -852,6 +994,25 @@ export function getSwipeablePlaces(category, activeTags = []) {
 
   const activeTagSet = new Set(activeTags)
   const filtered = basePlaces.filter((place) => place.tags.some((tag) => activeTagSet.has(tag)))
+
+  return filtered.length > 0 ? filtered : basePlaces
+}
+
+export function getTimelineBrowsePlaces(categories = [], activeTags = []) {
+  const categorySet = new Set((Array.isArray(categories) ? categories : []).filter(Boolean))
+  const basePlaces = CARD_PLACE_CATALOG
+    .filter((place) => categorySet.has(place.category) && place.swipeEligible && !place.locked)
+    .sort(sortByFeaturedThenRating)
+
+  if (basePlaces.length === 0 || !Array.isArray(activeTags) || activeTags.length === 0) {
+    return basePlaces
+  }
+
+  const activeTagSet = new Set(activeTags)
+  const filtered = basePlaces.filter((place) => (
+    place.tags.some((tag) => activeTagSet.has(tag))
+    || (typeof place.subcategory === 'string' && activeTagSet.has(place.subcategory))
+  ))
 
   return filtered.length > 0 ? filtered : basePlaces
 }

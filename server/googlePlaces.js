@@ -101,6 +101,7 @@ export function createMockPlaceDetails({ placeId, userLocation, seedPlace }) {
     priceLevel: seedPlace?.cost ?? (1 + (seed % 4)),
     topDishes: deriveTopDishes(seedPlace),
     photoUrl: undefined,
+    photoUrls: [],
     formattedAddress: undefined,
     editorialSummary: seedPlace?.vibe,
     googleMapsUri: undefined,
@@ -165,6 +166,20 @@ async function resolvePhotoUri(photoName, apiKey, allowedReferer) {
   return data.photoUri
 }
 
+async function resolvePhotoUris(photos, apiKey, allowedReferer) {
+  if (!Array.isArray(photos) || photos.length === 0) {
+    return []
+  }
+
+  const results = await Promise.all(
+    photos
+      .slice(0, 4)
+      .map((photo) => resolvePhotoUri(photo?.name, apiKey, allowedReferer))
+  )
+
+  return results.filter(Boolean)
+}
+
 function extractOpeningHoursSummary(place) {
   const weekdayDescriptions = place?.regularOpeningHours?.weekdayDescriptions
 
@@ -214,7 +229,8 @@ export async function resolvePlaceDetails(
       return fallback
     }
 
-    const photoUrl = await resolvePhotoUri(place.photos?.[0]?.name, apiKey, allowedReferer)
+    const photoUrls = await resolvePhotoUris(place.photos, apiKey, allowedReferer)
+    const photoUrl = photoUrls[0] ?? fallback.photoUrl
 
     return {
       ...fallback,
@@ -227,7 +243,8 @@ export async function resolvePlaceDetails(
         : fallback.distanceMeters,
       currentBusyness: deriveBusyness(placeId),
       priceLevel: normalizePriceLevel(place.priceLevel) ?? fallback.priceLevel,
-      photoUrl: photoUrl ?? fallback.photoUrl,
+      photoUrl,
+      photoUrls: photoUrls.length > 0 ? photoUrls : fallback.photoUrls,
       formattedAddress: place.formattedAddress ?? fallback.formattedAddress,
       editorialSummary: place.editorialSummary?.text ?? fallback.editorialSummary,
       googleMapsUri: place.googleMapsUri ?? fallback.googleMapsUri,

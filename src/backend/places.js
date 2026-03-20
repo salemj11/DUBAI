@@ -9,6 +9,7 @@
  * @property {number | undefined} priceLevel
  * @property {string[] | undefined} topDishes
  * @property {string | undefined} photoUrl
+ * @property {string[] | undefined} photoUrls
  * @property {string | undefined} formattedAddress
  * @property {string | undefined} editorialSummary
  * @property {string | undefined} googleMapsUri
@@ -58,6 +59,7 @@ function createFallbackPlaceDetails(placeId, userLocation, seedPlace) {
     priceLevel: seedPlace?.cost ?? (1 + (seed % 4)),
     topDishes: seedPlace?.cat === 'food' ? ['chef special', 'house favorite', 'sharing plate'] : undefined,
     photoUrl: undefined,
+    photoUrls: [],
     formattedAddress: undefined,
     editorialSummary: seedPlace?.vibe,
     googleMapsUri: undefined,
