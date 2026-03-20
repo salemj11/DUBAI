@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Crown,
   Gamepad2,
   MapPin,
@@ -386,8 +387,25 @@ function PlacePhotoCarousel({
 }) {
   const safePhotos = Array.isArray(photos) ? photos.filter(Boolean) : [];
   const [activeIndex, setActiveIndex] = useState(0);
+  const resolvedActiveIndex = activeIndex >= safePhotos.length ? 0 : activeIndex;
   const hasPhotos = safePhotos.length > 0;
   const canCycle = safePhotos.length > 1;
+  const nextPhoto = canCycle ? safePhotos[(resolvedActiveIndex + 1) % safePhotos.length] : null;
+  const afterNextPhoto = safePhotos.length > 2 ? safePhotos[(resolvedActiveIndex + 2) % safePhotos.length] : null;
+
+  useEffect(() => {
+    if (safePhotos.length < 2 || typeof Image === "undefined") {
+      return;
+    }
+
+    const preloadTargets = [nextPhoto, afterNextPhoto].filter(Boolean);
+
+    preloadTargets.forEach((photoUrl) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = photoUrl;
+    });
+  }, [afterNextPhoto, nextPhoto, safePhotos.length]);
 
   const showPrevious = (event) => {
     event.preventDefault();
@@ -409,8 +427,11 @@ function PlacePhotoCarousel({
       {hasPhotos ? (
         <img
           className="place-carousel-image"
-          src={safePhotos[activeIndex]}
+          src={safePhotos[resolvedActiveIndex]}
           alt={alt}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
         />
       ) : (
         <div className="place-carousel-fallback">
@@ -432,7 +453,7 @@ function PlacePhotoCarousel({
               <button
                 key={`${alt}-${index}`}
                 type="button"
-                className={`place-carousel-dot ${index === activeIndex ? "active" : ""}`}
+                className={`place-carousel-dot ${index === resolvedActiveIndex ? "active" : ""}`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -458,32 +479,40 @@ function PlaceDetailChips({ place, details, compact = false }) {
     : [];
 
   return (
-    <div className={`place-chip-row ${compact ? "compact" : ""}`}>
-      <span className="place-chip accent">
-        {"$".repeat(Math.max(1, details?.priceLevel || place.cost || 1))}
-      </span>
-      {typeof details?.rating === "number" && (
-        <span className="place-chip subtle">
-          <Star size={12} />
-          {details.rating.toFixed(1)}
+    <div>
+      <div className={`place-chip-row ${compact ? "compact" : ""}`}>
+        <span className="place-chip accent">
+          {"$".repeat(Math.max(1, details?.priceLevel || place.cost || 1))}
         </span>
+        {typeof details?.rating === "number" && (
+          <span className="place-chip subtle">
+            <Star size={12} />
+            {details.rating.toFixed(1)}
+          </span>
+        )}
+        <span className="place-chip subtle">{formatDistance(details?.distanceMeters)}</span>
+        {busyness && (
+          <span className="place-chip" style={{ background: busyness.background, color: busyness.tone }}>
+            {busyness.label}
+          </span>
+        )}
+        {visibleTags.map((tag) => (
+          <span key={tag} className="place-chip subtle">
+            {tag}
+          </span>
+        ))}
+        {visibleDishes.map((dish) => (
+          <span key={dish} className="place-chip subtle">
+            {dish}
+          </span>
+        ))}
+      </div>
+      {details?.openingHoursSummary && (
+        <p className="place-hours">
+          <Clock3 size={12} />
+          <span>{details.openingHoursSummary}</span>
+        </p>
       )}
-      <span className="place-chip subtle">{formatDistance(details?.distanceMeters)}</span>
-      {busyness && (
-        <span className="place-chip" style={{ background: busyness.background, color: busyness.tone }}>
-          {busyness.label}
-        </span>
-      )}
-      {visibleTags.map((tag) => (
-        <span key={tag} className="place-chip subtle">
-          {tag}
-        </span>
-      ))}
-      {visibleDishes.map((dish) => (
-        <span key={dish} className="place-chip subtle">
-          {dish}
-        </span>
-      ))}
     </div>
   );
 }
@@ -726,15 +755,21 @@ function FeaturedPlacesRail({ places, placeDetailsById, selectedCategory, onSele
                 radius={18}
                 className="featured-image-wrap"
               />
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div>
-                  <p className="featured-name">{details?.name || place.name}</p>
-                  <p className="featured-meta">{place.area}</p>
-                </div>
-                <p className="featured-copy">{details?.editorialSummary || place.vibe}</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {place.displayTags.slice(0, 2).map((tag) => (
-                    <span key={tag} className="featured-chip">{tag}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <p className="featured-name">{details?.name || place.name}</p>
+                    <p className="featured-meta">{place.area}</p>
+                  </div>
+                  <p className="featured-copy">{details?.editorialSummary || place.vibe}</p>
+                  {details?.openingHoursSummary && (
+                    <p className="place-hours" style={{ marginTop: -2 }}>
+                      <Clock3 size={12} />
+                      <span>{details.openingHoursSummary}</span>
+                    </p>
+                  )}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {place.displayTags.slice(0, 2).map((tag) => (
+                      <span key={tag} className="featured-chip">{tag}</span>
                   ))}
                 </div>
               </div>
@@ -1811,6 +1846,17 @@ export default function App() {
   const [joinError, setJoinError] = useState("");
   const [activePanel, setActivePanel] = useState("menu");
   const [featuredCategory, setFeaturedCategory] = useState("activity");
+  const [featuredOrderByCategory] = useState(() => (
+    Object.fromEntries(
+      CATEGORIES.map(({ id }) => [
+        id,
+        shuffleItems(
+          getPlacesByCategory(id, { includeLocked: false })
+            .filter((place) => place.swipeEligible && !place.locked)
+        ).map((place) => place.id),
+      ])
+    )
+  ));
   const [libraryCategory, setLibraryCategory] = useState("all");
   const [librarySort, setLibrarySort] = useState("distance");
   const [selectedCat, setSelectedCat] = useState(null);
@@ -1856,9 +1902,15 @@ export default function App() {
   const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
   const allBrowseablePlaces = getAllPlaces().filter((place) => place.swipeEligible && !place.locked);
-  const featuredPlaces = getPlacesByCategory(featuredCategory, { includeLocked: false })
-    .filter((place) => place.swipeEligible)
-    .slice(0, 6);
+  const featuredPool = getPlacesByCategory(featuredCategory, { includeLocked: false })
+    .filter((place) => place.swipeEligible && !place.locked);
+  const featuredPoolById = new Map(featuredPool.map((place) => [place.id, place]));
+  const featuredPlaces = ((featuredOrderByCategory[featuredCategory] ?? []).length > 0
+    ? (featuredOrderByCategory[featuredCategory] ?? [])
+      .map((placeId) => featuredPoolById.get(placeId))
+      .filter(Boolean)
+    : shuffleItems(featuredPool)
+  ).slice(0, 6);
   const filteredAvailablePlaces = (
     libraryCategory === "all"
       ? allBrowseablePlaces
@@ -3983,6 +4035,12 @@ export default function App() {
                       {typeof details?.rating === "number" && <span style={{ color: "var(--td)", fontSize: 11 }}>★ {details.rating.toFixed(1)}</span>}
                       {busyness && <span style={{ color: busyness.tone, fontSize: 11, fontWeight: 700 }}>{busyness.label}</span>}
                     </div>
+                    {details?.openingHoursSummary && (
+                      <p className="place-hours" style={{ marginTop: 8 }}>
+                        <Clock3 size={12} />
+                        <span>{details.openingHoursSummary}</span>
+                      </p>
+                    )}
                   </div>
                   {isSelected && (
                     <div className="bounce-in" style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center" }}>

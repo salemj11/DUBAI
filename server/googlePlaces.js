@@ -1,4 +1,6 @@
 const DEFAULT_ALLOWED_REFERER = 'https://dubai-trip-ten.vercel.app/'
+const MAX_PHOTO_URLS = 4
+const PHOTO_MAX_WIDTH_PX = 800
 const PLACE_FIELD_MASK = [
   'id',
   'displayName',
@@ -176,7 +178,7 @@ async function resolvePhotoUri(photoName, apiKey, allowedReferer) {
   if (!photoName) return undefined
 
   const response = await fetch(
-    `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=1200&skipHttpRedirect=true&key=${apiKey}`,
+    `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${PHOTO_MAX_WIDTH_PX}&skipHttpRedirect=true&key=${apiKey}`,
     {
       headers: {
         Referer: allowedReferer,
@@ -218,7 +220,7 @@ async function resolvePhotoUris(photos, apiKey, allowedReferer) {
 
   const results = await Promise.all(
     rankedPhotos
-      .slice(0, 6)
+      .slice(0, MAX_PHOTO_URLS)
       .map((photo) => resolvePhotoUri(photo?.name, apiKey, allowedReferer))
   )
 

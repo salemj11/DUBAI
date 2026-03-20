@@ -63,7 +63,7 @@ box-shadow:0 12px 30px rgba(0,0,0,.18);margin-bottom:22px;text-align:left}
 .timeline-event-foot{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0}
 .timeline-empty{padding:14px;border-radius:14px;border:1px dashed rgba(255,255,255,.08);color:var(--td);font-size:13px;text-align:center}
 .featured-grid{display:grid;grid-template-columns:1fr;gap:12px}
-.featured-card{padding:16px;border-radius:22px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;gap:14px}
+.featured-card{padding:16px;border-radius:22px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;gap:14px;content-visibility:auto;contain-intrinsic-size:320px}
 .featured-image-wrap{position:relative;width:100%;height:182px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg, rgba(255,255,255,.08), rgba(255,255,255,.02))}
 .featured-image{width:100%;height:100%;object-fit:cover;display:block}
 .featured-image-fallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:60px}
@@ -163,8 +163,8 @@ box-shadow:0 12px 30px rgba(0,0,0,.18);margin-bottom:22px;text-align:left}
 .featured-filter-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#dadada;font-size:12px;font-weight:700;cursor:pointer}
 .featured-filter-btn.active{background:rgba(240,168,48,.16);border-color:rgba(240,168,48,.28);color:#ffda97}
 
-.place-carousel{position:relative;width:100%;overflow:hidden;background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.06);flex-shrink:0}
-.place-carousel-image{width:100%;height:100%;object-fit:cover;display:block}
+.place-carousel{position:relative;width:100%;overflow:hidden;background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.06);flex-shrink:0;contain:layout paint}
+.place-carousel-image{width:100%;height:100%;object-fit:cover;display:block;transform:translateZ(0);backface-visibility:hidden}
 .place-carousel-fallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:56px;background:linear-gradient(135deg,rgba(240,168,48,.16),rgba(62,207,207,.1))}
 .place-carousel-scrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,7,12,.08),rgba(7,7,12,.48))}
 .place-carousel-badge{position:absolute;left:12px;top:12px;padding:6px 10px;border-radius:999px;background:rgba(7,7,12,.7);backdrop-filter:blur(8px);color:#fff;font-size:11px;font-weight:800;letter-spacing:1px;z-index:2}
@@ -180,8 +180,9 @@ box-shadow:0 12px 30px rgba(0,0,0,.18);margin-bottom:22px;text-align:left}
 .place-chip{display:inline-flex;align-items:center;gap:5px;padding:7px 11px;border-radius:999px;font-size:12px;font-weight:700}
 .place-chip.accent{background:var(--gd);color:var(--gold)}
 .place-chip.subtle{background:rgba(255,255,255,.04);color:#d0d0d0;font-weight:600}
+.place-hours{display:inline-flex;align-items:center;gap:6px;margin-top:10px;color:#bdbdbd;font-size:11px;line-height:1.5}
 
-.browse-place-card{width:100%;padding:16px;border-radius:26px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));display:flex;flex-direction:column;gap:16px;color:var(--t);cursor:pointer;text-align:left}
+.browse-place-card{width:100%;padding:16px;border-radius:26px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));display:flex;flex-direction:column;gap:16px;color:var(--t);cursor:pointer;text-align:left;content-visibility:auto;contain-intrinsic-size:420px}
 .browse-place-card.selected{border-color:rgba(240,168,48,.32);box-shadow:0 0 0 1px rgba(240,168,48,.12)}
 .browse-place-copy{display:flex;flex-direction:column;gap:10px}
 .browse-place-title{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;line-height:1.12}
