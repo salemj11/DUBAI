@@ -2764,12 +2764,11 @@ export default function App() {
         phase: "place_swipe",
         placeSwipes: {},
       }));
-
-      const timeoutId = window.setTimeout(() => {
-        initPlaceCards(room.winningCategory, Array.from(acceptedTags));
-      }, 0);
-
-      return () => window.clearTimeout(timeoutId);
+      setPlaceCards([]);
+      setPlaceRight([]);
+      setPlaceSwipesLeft(MAX_PLACE_SWIPES);
+      setPlaceDone(false);
+      setSubcatCards([]);
     }
 
     return undefined;
@@ -2786,7 +2785,9 @@ export default function App() {
       }
 
       const timeoutId = window.setTimeout(() => {
-        initPlaceCards(room.winningCategory, Array.from(activeTags));
+        startTransition(() => {
+          initPlaceCards(room.winningCategory, Array.from(activeTags));
+        });
       }, 0);
 
       return () => window.clearTimeout(timeoutId);
@@ -3549,7 +3550,7 @@ export default function App() {
           <div className="menu-grid fade-up s1">
             <MenuActionCard
               icon={<Gamepad2 size={22} />}
-              title="Kahoot-style game"
+              title="Pick or Lose"
               copy="Join the live lobby, fill bots if needed, then run the full vote and swipe loop."
               meta={`${liveLobbyPlayers.length}/${MAX_PLAYERS} in lobby · ${getPhaseLabel(room.phase)}`}
               badge={liveLobbyPlayers.length > 0 ? `${liveLobbyPlayers.length}/${MAX_PLAYERS}` : null}
