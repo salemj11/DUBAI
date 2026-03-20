@@ -164,12 +164,23 @@ export function useRoom() {
         })
         .on('broadcast', { event: ROOM_SYNC_REQUEST_EVENT }, ({ payload }) => {
           const senderId = typeof payload?.senderId === 'string' ? payload.senderId : null
+          const currentRoom = roomRef.current
+          const hasMeaningfulState = validState(currentRoom) && (
+            currentRoom.phase !== 'lobby'
+            || currentRoom.players.length > 0
+            || currentRoom.timelineEvents.length > 0
+            || currentRoom.isTestMode === true
+            || typeof currentRoom.hostName === 'string'
+          )
 
-          if (senderId === CLIENT_ID || !validState(roomRef.current)) {
+          if (
+            senderId === CLIENT_ID
+            || !hasMeaningfulState
+          ) {
             return
           }
 
-          void broadcastRoomState(roomRef.current, roomVersionRef.current)
+          void broadcastRoomState(currentRoom, roomVersionRef.current)
         })
         .subscribe((status) => {
           if (status !== 'SUBSCRIBED') {

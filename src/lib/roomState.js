@@ -32,6 +32,7 @@ export function addOneHour(timestamp) {
 
 export function createNewRoom() {
   return {
+    hostName: null,
     players: [],
     phase: 'lobby',
     round: 1,
@@ -110,6 +111,9 @@ export function normalizeRoomState(room) {
     ...ensureObject(room),
   }
 
+  nextRoom.hostName = typeof nextRoom.hostName === 'string' && nextRoom.hostName.trim()
+    ? nextRoom.hostName.trim()
+    : null
   nextRoom.players = ensureArray(nextRoom.players)
   nextRoom.testPlayers = ensureArray(nextRoom.testPlayers)
   nextRoom.categoryOptions = ensureArray(nextRoom.categoryOptions).filter(Boolean)
@@ -255,6 +259,7 @@ export function createEmptyTimelineDraft(defaultDay) {
     step: 'time',
     day: defaultDay,
     time: '20:00',
+    viewAllPlaces: false,
     categories: [],
     subcategories: [],
     category: null,

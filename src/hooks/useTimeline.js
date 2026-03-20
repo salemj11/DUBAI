@@ -15,7 +15,7 @@ import {
 
 const FALLBACK_EVENTS = getLockedTimelineEvents()
 
-export function useTimeline() {
+export function useTimeline(enabled = true) {
   const [timelineEvents, setTimelineEvents] = useState(FALLBACK_EVENTS)
   const [timelineSource, setTimelineSource] = useState('fallback')
 
@@ -42,6 +42,12 @@ export function useTimeline() {
   useEffect(() => {
     let isMounted = true
     let unsubscribe = null
+
+    if (!enabled) {
+      return () => {
+        isMounted = false
+      }
+    }
 
     async function boot() {
       setTimelineEvents(FALLBACK_EVENTS)
@@ -80,11 +86,14 @@ export function useTimeline() {
         void unsubscribe()
       }
     }
-  }, [refreshTimeline])
+  }, [enabled, refreshTimeline])
+
+  const resolvedTimelineEvents = enabled ? timelineEvents : FALLBACK_EVENTS
+  const resolvedTimelineSource = enabled ? timelineSource : 'fallback'
 
   return {
-    timelineEvents,
-    timelineDays: getTimelineDays(timelineEvents),
-    timelineSource,
+    timelineEvents: resolvedTimelineEvents,
+    timelineDays: getTimelineDays(resolvedTimelineEvents),
+    timelineSource: resolvedTimelineSource,
   }
 }

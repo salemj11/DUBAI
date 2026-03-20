@@ -53,6 +53,7 @@ import "./App.css";
 const SWIPE_THRESHOLD = 80;
 const TEST_NAMES = ["Test2", "Test3", "Test4", "Test5"];
 const DEFAULT_USER_LOCATION = { lat: 25.1024, lng: 55.1495 };
+const JOINED_SESSION_STORAGE_KEY = "dubai-weekend-trip.joined-session";
 
 function getStoredTestPlayers(room) {
   if (!Array.isArray(room?.testPlayers)) return [];
@@ -64,8 +65,50 @@ function uniqueNames(names) {
   return Array.from(new Set(names.filter((name) => typeof name === "string" && name.trim())));
 }
 
+function readStoredJoinedSession() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(JOINED_SESSION_STORAGE_KEY) || "null");
+
+    if (
+      parsed
+      && typeof parsed.name === "string"
+      && /^\d{3}$/.test(parsed.pin)
+    ) {
+      return {
+        name: parsed.name.trim(),
+        pin: parsed.pin,
+      };
+    }
+  } catch {
+    // Ignore invalid stored session data.
+  }
+
+  return null;
+}
+
+function writeStoredJoinedSession(session) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!session?.name || !/^\d{3}$/.test(session?.pin)) {
+    window.localStorage.removeItem(JOINED_SESSION_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(JOINED_SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
 function getLobbyDisplayPlayers(room, lobbyPlayers, me) {
   const actualPlayers = uniqueNames(lobbyPlayers.map((player) => player.name));
+  if (!me) {
+    return actualPlayers.slice(0, MAX_PLAYERS);
+  }
+
   const basePlayers = actualPlayers.length > 0 ? actualPlayers : uniqueNames([me]);
   const syntheticPlayers = getStoredTestPlayers(room)
     .filter((name) => !basePlayers.includes(name))
@@ -103,6 +146,18 @@ function shuffleItems(items) {
   }
 
   return next;
+}
+
+function buildFeaturedOrder() {
+  return Object.fromEntries(
+    CATEGORIES.map(({ id }) => [
+      id,
+      shuffleItems(
+        getPlacesByCategory(id, { includeLocked: false })
+          .filter((place) => place.swipeEligible && !place.locked)
+      ).map((place) => place.id),
+    ])
+  );
 }
 
 function formatTimelineTime(value) {
@@ -646,29 +701,84 @@ function NoticeBanner({ notice, onClick, onClose }) {
   );
 }
 
-function TimelinePreviewPanel({ timelineDays, timelineSource, placeDetailsById }) {
+function TimelinePreviewPanel({ timelineDays, timelineSource, placeDetailsById, compact = false }) {
   const sourceLabel = timelineSource === "live" ? "LIVE" : timelineSource === "hybrid" ? "SYNC" : "LOCAL";
+  const compactDays = timelineDays.filter((day) => day.events.length > 0).slice(0, 2);
+  const visibleDays = compact
+    ? (compactDays.length > 0 ? compactDays : timelineDays.slice(0, 1))
+    : timelineDays;
 
   return (
     <div className="timeline-panel fade-up s3">
       <div className="timeline-panel-head">
         <div>
           <p className="timeline-kicker">Weekend Timeline</p>
-          <h3 className="syne" style={{ fontSize: 20 }}>Locked anchors first</h3>
+          <h3 className="syne" style={{ fontSize: 20 }}>{compact ? "At a glance" : "Locked anchors first"}</h3>
         </div>
         <span className={`timeline-source ${timelineSource === "live" || timelineSource === "hybrid" ? "live" : "fallback"}`}>
           {sourceLabel}
         </span>
       </div>
       <div className="timeline-days">
-        {timelineDays.map((day) => (
+        {visibleDays.map((day) => (
           <div key={day.day} className="timeline-day-card">
             <div style={{ marginBottom: 12 }}>
               <p className="timeline-day-label">{day.shortLabel}</p>
               <p className="timeline-day-sub">{day.label}</p>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {day.events.length > 0 ? day.events.map((event) => {
+            {compact ? (
+              day.events.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {day.events.slice(0, 1).map((event) => {
+                    const place = event.place;
+                    const details = place ? placeDetailsById[place.id] : null;
+                    const tone = getTimelineTone(event);
+
+                    return (
+                      <div key={event.externalKey || event.id} className="timeline-event-card compact">
+                        <div className="timeline-event-main">
+                          <div className="timeline-time">
+                            <span>{formatTimelineTime(event.startTime)}</span>
+                            <span className="timeline-time-divider" />
+                            <span>{formatTimelineTime(event.endTime)}</span>
+                          </div>
+                          <div className="timeline-event-copy">
+                            <p className="timeline-event-title">{event.title}</p>
+                            <p className="timeline-event-meta">
+                              {details?.formattedAddress || place?.area || "Dubai"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="timeline-event-foot">
+                          <span
+                            style={{
+                              padding: "5px 10px",
+                              borderRadius: 999,
+                              background: tone.background,
+                              color: tone.color,
+                              fontSize: 11,
+                              fontWeight: 800,
+                              letterSpacing: 1.1,
+                            }}
+                          >
+                            {tone.label}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {day.events.length > 1 && (
+                    <p className="timeline-event-meta" style={{ marginTop: -2 }}>
+                      +{day.events.length - 1} more planned for this day
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="timeline-empty">Open window for more chaos.</div>
+              )
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {day.events.length > 0 ? day.events.map((event) => {
                 const place = event.place;
                 const details = place ? placeDetailsById[place.id] : null;
                 const tone = getTimelineTone(event);
@@ -709,7 +819,8 @@ function TimelinePreviewPanel({ timelineDays, timelineSource, placeDetailsById }
               }) : (
                 <div className="timeline-empty">Open window for more chaos.</div>
               )}
-            </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -717,7 +828,7 @@ function TimelinePreviewPanel({ timelineDays, timelineSource, placeDetailsById }
   );
 }
 
-function FeaturedPlacesRail({ places, placeDetailsById, selectedCategory, onSelectCategory }) {
+function FeaturedPlacesRail({ places, placeDetailsById, selectedCategory, onSelectCategory, onShuffle }) {
   return (
     <div className="featured-panel fade-up s4">
       <div className="timeline-panel-head">
@@ -725,6 +836,12 @@ function FeaturedPlacesRail({ places, placeDetailsById, selectedCategory, onSele
           <p className="timeline-kicker">Curated Deck</p>
           <h3 className="syne" style={{ fontSize: 20 }}>The kind of spots in rotation</h3>
         </div>
+        {onShuffle && (
+          <button type="button" className="ghost-chip" onClick={onShuffle}>
+            <Sparkles size={14} />
+            Shuffle
+          </button>
+        )}
       </div>
       <div className="featured-filter-row">
         {CATEGORIES.map((category) => (
@@ -1198,6 +1315,7 @@ function TimelineWorkspace({
 
       <button type="button" className="timeline-add-fab" onClick={onAddEvent}>
         <Plus size={20} />
+        <span>Add event</span>
       </button>
     </div>
   );
@@ -1228,7 +1346,12 @@ function TimelineComposer({
     ? draft.subcategories
     : (draft.subcategory ? [draft.subcategory] : []);
   const subcategoryOptions = getTimelineSubcategoryOptions(selectedCategories);
-  const placeOptions = getTimelineBrowsePlaces(selectedCategories, selectedSubcategories);
+  const browsingAllPlaces = draft.viewAllPlaces === true;
+  const effectivePlaceCategories = browsingAllPlaces
+    ? CATEGORIES.map((category) => category.id)
+    : selectedCategories;
+  const effectivePlaceSubcategories = browsingAllPlaces ? [] : selectedSubcategories;
+  const placeOptions = getTimelineBrowsePlaces(effectivePlaceCategories, effectivePlaceSubcategories);
   const activeDay = TRIP_DAYS.find((day) => day.day === draft.day) ?? TRIP_DAYS[0];
   const stepTitles = {
     time: "Pick a start time",
@@ -1258,7 +1381,7 @@ function TimelineComposer({
             {draft.step !== "time" && (
               <button type="button" className="ghost-chip" onClick={onBackStep}>
                 <ChevronLeft size={14} />
-                Back
+                {browsingAllPlaces && draft.step === "place" ? "Back to filters" : "Back"}
               </button>
             )}
             <button type="button" className="ghost-chip" onClick={onClose}>
@@ -1398,23 +1521,32 @@ function TimelineComposer({
         {draft.step === "place" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div className="composer-selection-row">
-              {selectedCategories.map((categoryId) => {
-                const category = CATEGORIES.find((item) => item.id === categoryId);
+              {browsingAllPlaces ? (
+                <span className="composer-pill">
+                  <Sparkles size={12} />
+                  All places
+                </span>
+              ) : (
+                <>
+                  {selectedCategories.map((categoryId) => {
+                    const category = CATEGORIES.find((item) => item.id === categoryId);
 
-                return category ? (
-                  <span key={categoryId} className="composer-pill">
-                    {category.emoji} {category.label}
-                  </span>
-                ) : null;
-              })}
-              {selectedSubcategories.map((subcategoryId) => {
-                const option = subcategoryOptions.find((item) => item.id === subcategoryId);
-                return option ? (
-                  <span key={subcategoryId} className="composer-pill subdued">
-                    {option.emoji} {option.label}
-                  </span>
-                ) : null;
-              })}
+                    return category ? (
+                      <span key={categoryId} className="composer-pill">
+                        {category.emoji} {category.label}
+                      </span>
+                    ) : null;
+                  })}
+                  {selectedSubcategories.map((subcategoryId) => {
+                    const option = subcategoryOptions.find((item) => item.id === subcategoryId);
+                    return option ? (
+                      <span key={subcategoryId} className="composer-pill subdued">
+                        {option.emoji} {option.label}
+                      </span>
+                    ) : null;
+                  })}
+                </>
+              )}
             </div>
             {placeOptions.length > 0 ? placeOptions.map((place) => {
               const details = placeDetailsById[place.id];
@@ -1432,14 +1564,16 @@ function TimelineComposer({
             }) : (
               <div className="timeline-empty">No places matched those filters. Go back and loosen the selection.</div>
             )}
-            <button
-              type="button"
-              className="solid-action"
-              onClick={onCreate}
-              disabled={!draft.placeId}
-            >
-              Add To Timeline
-            </button>
+            <div className="composer-footer">
+              <button
+                type="button"
+                className="solid-action"
+                onClick={onCreate}
+                disabled={!draft.placeId}
+              >
+                Add To Timeline
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1453,11 +1587,18 @@ function PlacesLibrary({
   selectedCategory,
   sortBy,
   suggestions,
+  selectedPlaceId,
   onBack,
+  onSelectPlace,
+  onOpenMaps,
   onOpenSuggest,
   onSelectCategory,
   onSelectSort,
 }) {
+  const selectedPlace = places.find((place) => place.id === selectedPlaceId) ?? null;
+  const selectedDetails = selectedPlace ? placeDetailsById[selectedPlace.id] : null;
+  const selectedMapsUrl = selectedPlace ? buildPlaceMapsUrl(selectedPlace, selectedDetails) : null;
+
   return (
     <div className="app grain">
       <div style={{ padding: "28px 20px 44px" }}>
@@ -1476,7 +1617,7 @@ function PlacesLibrary({
           <p className="timeline-kicker">All Places</p>
           <h2 className="syne" style={{ fontSize: 30, marginBottom: 8 }}>Everything in the deck</h2>
           <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.6 }}>
-            Browse the full set without swiping. Use this when you just want to see what is available before voting or adding something to the timeline.
+            Browse the full set without swiping. Tap a card to inspect it in-app, then open Google Maps only when you actually want directions.
           </p>
         </div>
 
@@ -1526,18 +1667,39 @@ function PlacesLibrary({
               key={place.id}
               place={place}
               details={placeDetailsById[place.id]}
-              selected={false}
+              selected={selectedPlaceId === place.id}
               mapsUrl={buildPlaceMapsUrl(place, placeDetailsById[place.id])}
-              onClick={() => {
-                const mapUrl = buildPlaceMapsUrl(place, placeDetailsById[place.id]);
-
-                if (mapUrl) {
-                  window.open(mapUrl, "_blank", "noopener,noreferrer");
-                }
-              }}
+              onClick={() => onSelectPlace(place.id)}
             />
           ))}
         </div>
+
+        {selectedPlace && (
+          <div className="library-selection-bar fade-up s3">
+            <div style={{ minWidth: 0 }}>
+              <p className="timeline-kicker" style={{ marginBottom: 2 }}>Selected Place</p>
+              <p className="syne" style={{ fontSize: 18, lineHeight: 1.2 }}>
+                {selectedDetails?.name || selectedPlace.name}
+              </p>
+              <p style={{ color: "var(--td)", fontSize: 12, marginTop: 6 }}>
+                {selectedDetails?.formattedAddress || selectedPlace.area}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+              <button type="button" className="ghost-chip" onClick={() => onSelectPlace(null)}>
+                Clear
+              </button>
+              <button
+                type="button"
+                className="solid-action library-selection-action"
+                disabled={!selectedMapsUrl}
+                onClick={() => onOpenMaps(selectedPlace)}
+              >
+                Open in Maps
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="timeline-panel fade-up s3">
           <div className="timeline-panel-head">
@@ -1838,27 +2000,19 @@ function SwipeStack({ cards, onSwipe, swipesLeft, maxSwipes, renderCard }) {
 
 export default function App() {
   const { room: roomState, lobby, updateRoom, loading, joinLobby, leaveLobby, resetLobby } = useRoom();
-  const { timelineEvents: baseTimelineEvents, timelineSource } = useTimeline();
-
   const [me, setMe] = useState(null);
-  const [nameInput, setNameInput] = useState("");
-  const [pinInput, setPinInput] = useState("");
-  const [joinError, setJoinError] = useState("");
   const [activePanel, setActivePanel] = useState("menu");
+  const timelineEnabled = Boolean(me);
+  const { timelineEvents: baseTimelineEvents, timelineSource } = useTimeline(timelineEnabled);
+  const storedSession = readStoredJoinedSession();
+  const [nameInput, setNameInput] = useState(() => storedSession?.name ?? "");
+  const [pinInput, setPinInput] = useState(() => storedSession?.pin ?? "");
+  const [joinError, setJoinError] = useState("");
   const [featuredCategory, setFeaturedCategory] = useState("activity");
-  const [featuredOrderByCategory] = useState(() => (
-    Object.fromEntries(
-      CATEGORIES.map(({ id }) => [
-        id,
-        shuffleItems(
-          getPlacesByCategory(id, { includeLocked: false })
-            .filter((place) => place.swipeEligible && !place.locked)
-        ).map((place) => place.id),
-      ])
-    )
-  ));
+  const [featuredOrderByCategory, setFeaturedOrderByCategory] = useState(() => buildFeaturedOrder());
   const [libraryCategory, setLibraryCategory] = useState("all");
   const [librarySort, setLibrarySort] = useState("distance");
+  const [selectedLibraryPlaceId, setSelectedLibraryPlaceId] = useState();
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
   const [subcatRight, setSubcatRight] = useState([]);
@@ -1896,8 +2050,12 @@ export default function App() {
   const previousLobbyNamesRef = useRef([]);
   const knownTimelineIdsRef = useRef(new Set());
   const resettingRoomRef = useRef(false);
+  const joinedSessionRef = useRef(storedSession);
+  const playerLastSeenAtRef = useRef(new Map());
 
   const room = normalizeRoomState(roomState || createNewRoom());
+  const storedTestPlayers = getStoredTestPlayers(room);
+  const liveLobbyNames = uniqueNames(lobby.players.map((player) => player.name));
   const testMode = room.isTestMode === true;
   const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
@@ -1942,7 +2100,7 @@ export default function App() {
     ? 0
     : Math.min(timelineDayIndex, timelineDays.length - 1);
   const timelineDay = timelineDays[safeTimelineDayIndex] ?? timelineDays[0] ?? { day: TRIP_DAYS[0].day, label: TRIP_DAYS[0].label, shortLabel: TRIP_DAYS[0].shortLabel, events: [] };
-  const hostName = room.phase === "lobby" ? liveLobbyPlayers[0] : room.players[0];
+  const hostName = room.hostName || liveLobbyNames[0] || liveLobbyPlayers[0] || room.players[0] || null;
   const isHost = hostName === me;
   const isActivePlayer = room.phase === "lobby" || room.players.includes(me);
   const pendingTimelineCount = mergedTimelineEvents.filter((event) => !event.locked && event.status === "pending").length;
@@ -1983,6 +2141,7 @@ export default function App() {
     setTimelineDraft(createEmptyTimelineDraft(TRIP_DAYS[0].day));
     setHighlightedEventId(null);
     setRouletteCursor(0);
+    setSelectedLibraryPlaceId(undefined);
     setCustomPlaceComposerOpen(false);
     setCustomPlaceDraft({
       name: "",
@@ -1993,8 +2152,6 @@ export default function App() {
 
     if (!preserveIdentity) {
       setMe(null);
-      setNameInput("");
-      setPinInput("");
       setJoinError("");
       setUnreadTimelineCount(0);
     }
@@ -2003,6 +2160,69 @@ export default function App() {
   const update = useCallback(async (fn) => {
     await updateRoom((current) => fn(normalizeRoomState(current && Object.keys(current).length > 0 ? current : createNewRoom())));
   }, [updateRoom]);
+
+  useEffect(() => {
+    if (room.phase === "lobby" && activePanel === "menu") {
+      setFeaturedOrderByCategory(buildFeaturedOrder());
+    }
+  }, [activePanel, room.phase]);
+
+  useEffect(() => {
+    const now = Date.now();
+
+    liveLobbyNames.forEach((name) => {
+      playerLastSeenAtRef.current.set(name, now);
+    });
+  }, [liveLobbyNames]);
+
+  useEffect(() => {
+    if (!me) return;
+
+    const activeRoundPlayers = room.players.filter((player) => (
+      liveLobbyNames.includes(player) || storedTestPlayers.includes(player)
+    ));
+    const availableHosts = room.phase === "lobby"
+      ? (liveLobbyNames.length > 0 ? liveLobbyNames : uniqueNames([me]))
+      : activeRoundPlayers;
+    const fallbackHost = availableHosts[0] ?? null;
+
+    if (!fallbackHost) return;
+
+    if (!room.hostName) {
+      if (fallbackHost === me) {
+        void update((current) => {
+          const normalized = normalizeRoomState(current);
+
+          if (normalized.hostName) {
+            return normalized;
+          }
+
+          return {
+            ...normalized,
+            hostName: fallbackHost,
+          };
+        });
+      }
+
+      return;
+    }
+
+    if (!availableHosts.includes(room.hostName) && fallbackHost === me) {
+      void update((current) => {
+        const normalized = normalizeRoomState(current);
+        const nextHost = availableHosts[0] ?? me;
+
+        if (normalized.hostName === nextHost) {
+          return normalized;
+        }
+
+        return {
+          ...normalized,
+          hostName: nextHost,
+        };
+      });
+    }
+  }, [liveLobbyNames, me, room.hostName, room.phase, room.players, storedTestPlayers, update]);
 
   useEffect(() => {
     const placesToHydrate = Array.from(new Map([
@@ -2077,8 +2297,7 @@ export default function App() {
   }, [locationStatus, me]);
 
   useEffect(() => {
-    if (!me) {
-      setCustomPlaceSuggestions([]);
+    if (!me || activePanel !== "places") {
       return;
     }
 
@@ -2096,7 +2315,28 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [me]);
+  }, [activePanel, me]);
+
+  useEffect(() => {
+    if (activePanel !== "places") {
+      setSelectedLibraryPlaceId(undefined);
+      return;
+    }
+
+    if (availablePlaces.length === 0) {
+      setSelectedLibraryPlaceId(null);
+      return;
+    }
+
+    if (selectedLibraryPlaceId === undefined) {
+      setSelectedLibraryPlaceId(availablePlaces[0].id);
+      return;
+    }
+
+    if (selectedLibraryPlaceId && !availablePlaces.some((place) => place.id === selectedLibraryPlaceId)) {
+      setSelectedLibraryPlaceId(availablePlaces[0].id);
+    }
+  }, [activePanel, availablePlaces, selectedLibraryPlaceId]);
 
   useEffect(() => {
     if (!lobby.wasReset || resettingRoomRef.current) return;
@@ -2199,29 +2439,43 @@ export default function App() {
   }, [highlightedEventId]);
 
   useEffect(() => {
-    if (!me || !isHost || room.phase === "lobby" || room.players.length === 0) return;
+    if (!me || !isHost || room.phase === "lobby" || room.players.length === 0) return undefined;
 
-    const liveNames = new Set(lobby.players.map((player) => player.name));
+    const pruneMissingPlayers = () => {
+      const now = Date.now();
+      const liveNames = new Set(lobby.players.map((player) => player.name));
+      const testPlayers = new Set(getStoredTestPlayers(room));
 
-    if (!liveNames.has(me)) return;
+      if (!liveNames.has(me)) return;
 
-    const nextPlayers = room.players.filter((player) => liveNames.has(player) || getStoredTestPlayers(room).includes(player));
+      const nextPlayers = room.players.filter((player) => {
+        if (testPlayers.has(player) || liveNames.has(player)) {
+          return true;
+        }
 
-    if (nextPlayers.length === room.players.length) return;
-
-    const removedPlayers = room.players.filter((player) => !nextPlayers.includes(player));
-
-    if (nextPlayers.length > 0) {
-      void update((current) => pruneRoomStateForPlayers(current, nextPlayers));
-    }
-
-    removedPlayers.forEach((player) => {
-      showNotice({
-        tone: "warning",
-        kicker: "Roster updated",
-        message: `${player} was removed from the active round after disconnecting.`,
+        const lastSeenAt = playerLastSeenAtRef.current.get(player);
+        return typeof lastSeenAt === "number" && now - lastSeenAt < 15000;
       });
-    });
+
+      if (nextPlayers.length === room.players.length || nextPlayers.length === 0) return;
+
+      const removedPlayers = room.players.filter((player) => !nextPlayers.includes(player));
+
+      void update((current) => pruneRoomStateForPlayers(current, nextPlayers));
+
+      removedPlayers.forEach((player) => {
+        showNotice({
+          tone: "warning",
+          kicker: "Roster updated",
+          message: `${player} disconnected and was removed after a short grace window.`,
+        });
+      });
+    };
+
+    pruneMissingPlayers();
+    const intervalId = window.setInterval(pruneMissingPlayers, 4000);
+
+    return () => window.clearInterval(intervalId);
   }, [isHost, lobby.players, me, room, update, showNotice]);
 
   useEffect(() => {
@@ -2395,6 +2649,8 @@ export default function App() {
     try {
       setJoinError("");
       await joinLobby({ name, pin });
+      joinedSessionRef.current = { name, pin };
+      writeStoredJoinedSession({ name, pin });
       setMe(name);
       setActivePanel("menu");
       setLocationStatus("idle");
@@ -2409,8 +2665,8 @@ export default function App() {
   };
 
   const handleReset = async () => {
-    const credentials = me && /^\d{3}$/.test(pinInput)
-      ? { name: me, pin: pinInput }
+    const credentials = me && joinedSessionRef.current && /^\d{3}$/.test(joinedSessionRef.current.pin)
+      ? joinedSessionRef.current
       : null;
 
     resettingRoomRef.current = true;
@@ -2428,6 +2684,7 @@ export default function App() {
     if (credentials) {
       try {
         await joinLobby(credentials);
+        joinedSessionRef.current = credentials;
         setMe(credentials.name);
         setActivePanel("menu");
         showNotice({
@@ -2473,6 +2730,7 @@ export default function App() {
 
     await update((current) => ({
       ...current,
+      hostName: current.hostName || me,
       players: displayPlayers,
       phase: "category_vote",
       categoryVotes: {},
@@ -2748,7 +3006,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (room.phase !== "subcat_swipe") return undefined;
+    if (room.phase !== "subcat_swipe" || !isHost) return undefined;
 
     const allDone = room.players.every((player) => room.subcatSwipes[player]?.done);
 
@@ -2772,7 +3030,7 @@ export default function App() {
     }
 
     return undefined;
-  }, [room.phase, room.players, room.subcatSwipes, room.winningCategory, update]);
+  }, [isHost, room.phase, room.players, room.subcatSwipes, room.winningCategory, update]);
 
   useEffect(() => {
     if (room.phase === "place_swipe" && room.winningCategory && !placeDone && placeCards.length === 0) {
@@ -2831,7 +3089,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (room.phase !== "place_swipe") return undefined;
+    if (room.phase !== "place_swipe" || !isHost) return undefined;
 
     const allDone = room.players.every((player) => room.placeSwipes[player]?.done);
 
@@ -2868,7 +3126,7 @@ export default function App() {
     }
 
     return undefined;
-  }, [room.phase, room.placeSwipes, room.players, update]);
+  }, [isHost, room.phase, room.placeSwipes, room.players, update]);
 
   const toggleFinal = (id) => {
     if (submitted) return;
@@ -2887,14 +3145,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (room.phase !== "final_vote") return;
+    if (room.phase !== "final_vote" || !isHost) return;
 
     const allVoted = room.players.every((player) => room.finalVotes[player] !== undefined);
 
     if (allVoted && !room.finalShowResults) {
       void update((current) => ({ ...current, finalShowResults: true }));
     }
-  }, [room.finalShowResults, room.finalVotes, room.phase, room.players, update]);
+  }, [isHost, room.finalShowResults, room.finalVotes, room.phase, room.players, update]);
 
   const handleFinalProceed = async () => {
     const counts = {};
@@ -3009,6 +3267,7 @@ export default function App() {
       if (current.step === "place") {
         return {
           ...current,
+          viewAllPlaces: false,
           step: hasSubcategoryStep ? "subcategory" : "category",
           placeId: null,
         };
@@ -3038,10 +3297,7 @@ export default function App() {
   const handleViewAllTimelinePlaces = () => {
     setTimelineDraft((current) => ({
       ...current,
-      categories: CATEGORIES.map((category) => category.id),
-      category: null,
-      subcategories: [],
-      subcategory: null,
+      viewAllPlaces: true,
       placeId: null,
       step: "place",
     }));
@@ -3423,7 +3679,16 @@ export default function App() {
           selectedCategory={libraryCategory}
           sortBy={librarySort}
           suggestions={customPlaceSuggestions}
+          selectedPlaceId={selectedLibraryPlaceId}
           onBack={() => setActivePanel("menu")}
+          onSelectPlace={setSelectedLibraryPlaceId}
+          onOpenMaps={(place) => {
+            const mapUrl = buildPlaceMapsUrl(place, placeDetailsById[place.id]);
+
+            if (mapUrl) {
+              window.open(mapUrl, "_blank", "noopener,noreferrer");
+            }
+          }}
           onOpenSuggest={() => setCustomPlaceComposerOpen(true)}
           onSelectCategory={setLibraryCategory}
           onSelectSort={setLibrarySort}
@@ -3486,8 +3751,8 @@ export default function App() {
                   {player.charAt(0).toUpperCase()}
                 </div>
                 <span style={{ fontWeight: 600, fontSize: 15 }}>{player}</span>
-                {index === 0 && <Crown size={14} style={{ color: "var(--gold)", marginLeft: "auto" }} />}
-                {player === me && <span style={{ marginLeft: index === 0 ? 4 : "auto", fontSize: 11, color: "var(--td)" }}>(you)</span>}
+                {player === hostName && <Crown size={14} style={{ color: "var(--gold)", marginLeft: "auto" }} />}
+                {player === me && <span style={{ marginLeft: player === hostName ? 4 : "auto", fontSize: 11, color: "var(--td)" }}>(you)</span>}
               </div>
             ))}
           </div>
@@ -3519,7 +3784,7 @@ export default function App() {
             </button>
           )}
           {!isHost && <Waiting message="Waiting for host..." sub="Hang tight while the room fills." />}
-          <TimelinePreviewPanel timelineDays={timelineDays} timelineSource={timelineSourceLabel} placeDetailsById={placeDetailsById} />
+          <TimelinePreviewPanel timelineDays={timelineDays} timelineSource={timelineSourceLabel} placeDetailsById={placeDetailsById} compact />
         </div>
       </div>
     );
@@ -3616,12 +3881,13 @@ export default function App() {
             </button>
           </div>
 
-          <TimelinePreviewPanel timelineDays={timelineDays} timelineSource={timelineSourceLabel} placeDetailsById={placeDetailsById} />
+          <TimelinePreviewPanel timelineDays={timelineDays} timelineSource={timelineSourceLabel} placeDetailsById={placeDetailsById} compact />
           <FeaturedPlacesRail
-            places={featuredPlaces}
+            places={featuredPlaces.slice(0, 3)}
             placeDetailsById={placeDetailsById}
             selectedCategory={featuredCategory}
             onSelectCategory={setFeaturedCategory}
+            onShuffle={() => setFeaturedOrderByCategory(buildFeaturedOrder())}
           />
         </div>
       </div>
