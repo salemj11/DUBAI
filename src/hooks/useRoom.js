@@ -6,6 +6,7 @@ import {
   subscribeToLobby,
 } from '../backend/presence.js'
 import { ensureAnonymousSupabaseSession, supabase } from '../supabase.js'
+import { createNewRoom, normalizeRoomState } from '../lib/roomState.js'
 
 const ROOM_STORAGE_KEY = 'dubai-weekend-trip.room-state'
 const ROOM_SYNC_TOPIC = 'room:state'
@@ -23,26 +24,13 @@ const EMPTY_LOBBY = {
   wasReset: false,
 }
 
-function newRoom() {
-  return {
-    players: [], phase: 'lobby', round: 1,
-    isTestMode: false, testPlayers: [],
-    categoryOptions: ['food', 'chill', 'activity'],
-    categoryVotes: {}, categoryShowResults: false, winningCategory: null,
-    subcatSwipes: {}, placeSwipes: {},
-    finalOptions: [], finalVotes: {}, finalMaxSelections: 4,
-    finalVoteEndTime: null, finalRound: 1, finalShowResults: false,
-    decidedPlace: null,
-  }
-}
-
 function validState(state) {
   return state && typeof state === 'object' && Array.isArray(state.players)
 }
 
 function readStoredRoom() {
   if (typeof window === 'undefined') {
-    return { room: newRoom(), version: 0 }
+    return { room: createNewRoom(), version: 0 }
   }
 
   try {
@@ -50,19 +38,19 @@ function readStoredRoom() {
 
     if (validState(parsed?.room)) {
       return {
-        room: parsed.room,
+        room: normalizeRoomState(parsed.room),
         version: Number.isFinite(parsed.version) ? parsed.version : 0,
       }
     }
 
     if (validState(parsed)) {
-      return { room: parsed, version: 0 }
+      return { room: normalizeRoomState(parsed), version: 0 }
     }
   } catch {
     // Ignore corrupt local cache and start fresh.
   }
 
-  return { room: newRoom(), version: 0 }
+  return { room: createNewRoom(), version: 0 }
 }
 
 function writeStoredRoom(room, version) {
@@ -93,7 +81,7 @@ export function useRoom() {
   const [room, setRoom] = useState(null)
   const [lobby, setLobby] = useState(EMPTY_LOBBY)
   const [loading, setLoading] = useState(true)
-  const roomRef = useRef(newRoom())
+  const roomRef = useRef(createNewRoom())
   const roomVersionRef = useRef(0)
   const roomChannelRef = useRef(null)
 
@@ -102,10 +90,12 @@ export function useRoom() {
       return
     }
 
-    roomRef.current = nextRoom
+    const normalizedRoom = normalizeRoomState(nextRoom)
+
+    roomRef.current = normalizedRoom
     roomVersionRef.current = version
-    writeStoredRoom(nextRoom, version)
-    setRoom(nextRoom)
+    writeStoredRoom(normalizedRoom, version)
+    setRoom(normalizedRoom)
   }, [])
 
   const broadcastRoomState = useCallback(async (nextRoom = roomRef.current, version = roomVersionRef.current) => {
@@ -212,7 +202,7 @@ export function useRoom() {
 
   const updateRoom = useCallback(async (fn) => {
     const current = validState(roomRef.current) ? roomRef.current : readStoredRoom().room
-    const nextState = fn(current)
+    const nextState = normalizeRoomState(fn(current))
     const version = Date.now()
 
     applyRoomState(nextState, version)

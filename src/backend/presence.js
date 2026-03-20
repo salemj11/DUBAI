@@ -16,6 +16,7 @@ let activePresence = null
 let latestSnapshot = createSnapshot([], false)
 const subscribers = new Set()
 const suppressedUserIds = new Set()
+let lifecycleHandlersInstalled = false
 
 function readResetVersion() {
   if (typeof window === 'undefined') return 0
@@ -125,6 +126,27 @@ async function untrackActivePresence() {
   notifySubscribers(buildSnapshot())
 }
 
+function installLifecycleHandlers() {
+  if (lifecycleHandlersInstalled || typeof window === 'undefined') return
+
+  const bestEffortLeave = () => {
+    if (!activeChannel || !activePresence) return
+
+    suppressedUserIds.add(activePresence.userId)
+    activePresence = null
+
+    try {
+      void activeChannel.untrack()
+    } catch {
+      // Best effort only during tab close / app backgrounding.
+    }
+  }
+
+  window.addEventListener('pagehide', bestEffortLeave)
+  window.addEventListener('beforeunload', bestEffortLeave)
+  lifecycleHandlersInstalled = true
+}
+
 async function applyReset(payload) {
   if (payload.resetVersion <= activeResetVersion) return
 
@@ -156,6 +178,7 @@ function bindChannelHandlers(channel) {
 
 async function ensureLobbyChannel() {
   await ensureAnonymousSupabaseSession()
+  installLifecycleHandlers()
 
   if (activeChannel) return activeChannel
   if (activeChannelPromise) return activeChannelPromise
@@ -282,15 +305,11 @@ export async function leaveRoom() {
 }
 
 export async function resetRoom() {
-  if (!activePresence) {
-    throw new Error('Join the room before trying to reset it.')
-  }
-
   const channel = await ensureLobbyChannel()
   const payload = {
     resetVersion: activeResetVersion + 1,
     requestedAt: new Date().toISOString(),
-    requestedBy: activePresence.userId,
+    requestedBy: activePresence?.userId ?? 'system:manual-reset',
   }
 
   const sendStatus = await channel.send({
