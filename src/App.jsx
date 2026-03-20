@@ -197,6 +197,36 @@ function getPlacePhotoUrls(details) {
   return [];
 }
 
+function buildPlaceMapsUrl(place, details) {
+  if (typeof details?.googleMapsUri === "string" && details.googleMapsUri) {
+    return details.googleMapsUri;
+  }
+
+  const query = place?.googleQuery || [details?.name || place?.name, details?.formattedAddress || place?.area || "Dubai"]
+    .filter(Boolean)
+    .join(" ");
+
+  if (!query) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    api: "1",
+    query,
+  });
+
+  const rawPlaceId = details?.googlePlaceId || place?.googlePlaceId;
+  const normalizedPlaceId = typeof rawPlaceId === "string" && rawPlaceId.includes("/")
+    ? rawPlaceId.split("/").pop()
+    : rawPlaceId;
+
+  if (typeof normalizedPlaceId === "string" && normalizedPlaceId.startsWith("ChI")) {
+    params.set("query_place_id", normalizedPlaceId);
+  }
+
+  return `https://www.google.com/maps/search/?${params.toString()}`;
+}
+
 function PlacePhotoCarousel({
   photos,
   fallback,
@@ -310,7 +340,7 @@ function PlaceDetailChips({ place, details, compact = false }) {
   );
 }
 
-function PlaceBrowseCard({ place, details, selected, onClick }) {
+function PlaceBrowseCard({ place, details, selected, onClick, mapsUrl }) {
   const category = CATEGORIES.find((item) => item.id === place.cat);
 
   return (
@@ -337,7 +367,19 @@ function PlaceBrowseCard({ place, details, selected, onClick }) {
       <div className="browse-place-copy">
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p className="browse-place-title">{details?.name || place.name}</p>
+            {mapsUrl ? (
+              <a
+                href={mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="browse-place-link"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {details?.name || place.name}
+              </a>
+            ) : (
+              <p className="browse-place-title">{details?.name || place.name}</p>
+            )}
             <p className="browse-place-meta">{details?.formattedAddress || place.area}</p>
           </div>
           {selected && (
@@ -1008,10 +1050,12 @@ function PlacesLibrary({
   places,
   placeDetailsById,
   selectedCategory,
+  sortBy,
   suggestions,
   onBack,
   onOpenSuggest,
   onSelectCategory,
+  onSelectSort,
 }) {
   return (
     <div className="app grain">
@@ -1057,6 +1101,24 @@ function PlacesLibrary({
           ))}
         </div>
 
+        <div className="featured-filter-row fade-up s1" style={{ marginTop: -4, marginBottom: 18 }}>
+          {[
+            { id: "distance", label: "Closest to FIVE Palm" },
+            { id: "rating", label: "Top rated" },
+            { id: "price_desc", label: "Price high-low" },
+            { id: "price_asc", label: "Price low-high" },
+          ].map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`featured-filter-btn ${sortBy === option.id ? "active" : ""}`}
+              onClick={() => onSelectSort(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
         <div className="library-stack fade-up s2">
           {places.map((place) => (
             <PlaceBrowseCard
@@ -1064,8 +1126,9 @@ function PlacesLibrary({
               place={place}
               details={placeDetailsById[place.id]}
               selected={false}
+              mapsUrl={buildPlaceMapsUrl(place, placeDetailsById[place.id])}
               onClick={() => {
-                const mapUrl = placeDetailsById[place.id]?.googleMapsUri;
+                const mapUrl = buildPlaceMapsUrl(place, placeDetailsById[place.id]);
 
                 if (mapUrl) {
                   window.open(mapUrl, "_blank", "noopener,noreferrer");
@@ -1383,6 +1446,7 @@ export default function App() {
   const [activePanel, setActivePanel] = useState("menu");
   const [featuredCategory, setFeaturedCategory] = useState("activity");
   const [libraryCategory, setLibraryCategory] = useState("all");
+  const [librarySort, setLibrarySort] = useState("distance");
   const [selectedCat, setSelectedCat] = useState(null);
   const [subcatCards, setSubcatCards] = useState([]);
   const [subcatRight, setSubcatRight] = useState([]);
@@ -1429,11 +1493,29 @@ export default function App() {
   const featuredPlaces = getPlacesByCategory(featuredCategory, { includeLocked: false })
     .filter((place) => place.swipeEligible)
     .slice(0, 6);
-  const availablePlaces = (
+  const filteredAvailablePlaces = (
     libraryCategory === "all"
       ? allBrowseablePlaces
       : getPlacesByCategory(libraryCategory, { includeLocked: false })
   ).filter((place) => place.swipeEligible && !place.locked);
+  const availablePlaces = [...filteredAvailablePlaces].sort((left, right) => {
+    const leftDetails = placeDetailsById[left.id];
+    const rightDetails = placeDetailsById[right.id];
+
+    if (librarySort === "rating") {
+      return (rightDetails?.rating ?? right.rating ?? 0) - (leftDetails?.rating ?? left.rating ?? 0);
+    }
+
+    if (librarySort === "price_desc") {
+      return (rightDetails?.priceLevel ?? right.cost ?? 0) - (leftDetails?.priceLevel ?? left.cost ?? 0);
+    }
+
+    if (librarySort === "price_asc") {
+      return (leftDetails?.priceLevel ?? left.cost ?? 0) - (rightDetails?.priceLevel ?? right.cost ?? 0);
+    }
+
+    return (leftDetails?.distanceMeters ?? Number.MAX_SAFE_INTEGER) - (rightDetails?.distanceMeters ?? Number.MAX_SAFE_INTEGER);
+  });
   const mergedTimelineEvents = mergeTimelineCollections(baseTimelineEvents, room.timelineEvents, displayPlayers.length);
   const timelineDays = getTimelineDays(mergedTimelineEvents);
   const timelinePlaces = mergedTimelineEvents.map((event) => event.place).filter(Boolean);
@@ -2865,10 +2947,12 @@ export default function App() {
           places={availablePlaces}
           placeDetailsById={placeDetailsById}
           selectedCategory={libraryCategory}
+          sortBy={librarySort}
           suggestions={customPlaceSuggestions}
           onBack={() => setActivePanel("menu")}
           onOpenSuggest={() => setCustomPlaceComposerOpen(true)}
           onSelectCategory={setLibraryCategory}
+          onSelectSort={setLibrarySort}
         />
         <CustomPlaceComposer
           open={customPlaceComposerOpen}

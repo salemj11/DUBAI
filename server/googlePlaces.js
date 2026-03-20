@@ -12,6 +12,10 @@ const PLACE_FIELD_MASK = [
   'userRatingCount',
   'regularOpeningHours.weekdayDescriptions',
 ].join(',')
+const SEARCH_PLACE_FIELD_MASK = PLACE_FIELD_MASK
+  .split(',')
+  .map((field) => `places.${field}`)
+  .join(',')
 
 const PRICE_LEVEL_MAP = {
   PRICE_LEVEL_FREE: 0,
@@ -77,6 +81,30 @@ function deriveTopDishes(seedPlace) {
   return undefined
 }
 
+function buildFallbackMapsUri(seedPlace, resolvedPlace = null) {
+  const query = seedPlace?.googleQuery
+    ?? [seedPlace?.name, seedPlace?.area, 'Dubai'].filter(Boolean).join(' ')
+
+  if (!query) {
+    return undefined
+  }
+
+  const params = new URLSearchParams({
+    api: '1',
+    query,
+  })
+  const rawPlaceId = resolvedPlace?.id ?? seedPlace?.googlePlaceId
+  const normalizedPlaceId = typeof rawPlaceId === 'string' && rawPlaceId.includes('/')
+    ? rawPlaceId.split('/').pop()
+    : rawPlaceId
+
+  if (typeof normalizedPlaceId === 'string' && normalizedPlaceId.startsWith('ChI')) {
+    params.set('query_place_id', normalizedPlaceId)
+  }
+
+  return `https://www.google.com/maps/search/?${params.toString()}`
+}
+
 function buildGoogleHeaders(apiKey, allowedReferer, fieldMask) {
   return {
     'Content-Type': 'application/json',
@@ -104,20 +132,20 @@ export function createMockPlaceDetails({ placeId, userLocation, seedPlace }) {
     photoUrls: [],
     formattedAddress: undefined,
     editorialSummary: seedPlace?.vibe,
-    googleMapsUri: undefined,
+    googleMapsUri: buildFallbackMapsUri(seedPlace),
     lat: seedPlace?.lat ?? null,
     lng: seedPlace?.lng ?? null,
     openingHoursSummary: seedPlace?.openingHoursSummary ?? null,
   }
 }
 
-async function searchGooglePlace(searchText, apiKey, allowedReferer) {
+async function searchGooglePlaces(searchText, apiKey, allowedReferer, maxResultCount = 5) {
   const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
-    headers: buildGoogleHeaders(apiKey, allowedReferer, `places.${PLACE_FIELD_MASK}`),
+    headers: buildGoogleHeaders(apiKey, allowedReferer, SEARCH_PLACE_FIELD_MASK),
     body: JSON.stringify({
       textQuery: searchText,
-      maxResultCount: 1,
+      maxResultCount,
       languageCode: 'en',
       regionCode: 'AE',
     }),
@@ -129,7 +157,7 @@ async function searchGooglePlace(searchText, apiKey, allowedReferer) {
 
   const data = await response.json()
 
-  return data.places?.[0] ?? null
+  return Array.isArray(data.places) ? data.places : []
 }
 
 async function fetchGooglePlace(placeId, apiKey, allowedReferer) {
@@ -173,11 +201,11 @@ async function resolvePhotoUris(photos, apiKey, allowedReferer) {
 
   const results = await Promise.all(
     photos
-      .slice(0, 4)
+      .slice(0, 6)
       .map((photo) => resolvePhotoUri(photo?.name, apiKey, allowedReferer))
   )
 
-  return results.filter(Boolean)
+  return Array.from(new Set(results.filter(Boolean)))
 }
 
 function extractOpeningHoursSummary(place) {
@@ -196,6 +224,71 @@ function extractOpeningHoursSummary(place) {
   return todaysLine ?? weekdayDescriptions[0]
 }
 
+function getPlaceScore(place) {
+  return (
+    (Array.isArray(place?.photos) && place.photos.length > 0 ? 8 : 0)
+    + (typeof place?.googleMapsUri === 'string' ? 3 : 0)
+    + (typeof place?.formattedAddress === 'string' ? 2 : 0)
+    + (typeof place?.rating === 'number' ? 2 : 0)
+    + (place?.location ? 1 : 0)
+  )
+}
+
+function normalizeVenueName(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isSimilarPlaceName(seedPlace, candidatePlace) {
+  const seedName = normalizeVenueName(seedPlace?.name)
+  const candidateName = normalizeVenueName(
+    candidatePlace?.displayName?.text
+      ?? candidatePlace?.displayName
+      ?? candidatePlace?.name
+  )
+
+  if (!seedName || !candidateName) {
+    return true
+  }
+
+  if (seedName.includes(candidateName) || candidateName.includes(seedName)) {
+    return true
+  }
+
+  const seedTokens = new Set(seedName.split(' ').filter(Boolean))
+  const candidateTokens = new Set(candidateName.split(' ').filter(Boolean))
+  const overlap = Array.from(seedTokens).filter((token) => candidateTokens.has(token)).length
+  const minimumOverlap = Math.max(1, Math.ceil(seedTokens.size * 0.6))
+
+  return overlap >= minimumOverlap
+}
+
+function mergePlaces(primaryPlace, secondaryPlace) {
+  if (!primaryPlace) return secondaryPlace
+  if (!secondaryPlace) return primaryPlace
+
+  return {
+    ...secondaryPlace,
+    ...primaryPlace,
+    id: primaryPlace.id ?? secondaryPlace.id,
+    displayName: primaryPlace.displayName ?? secondaryPlace.displayName,
+    editorialSummary: primaryPlace.editorialSummary ?? secondaryPlace.editorialSummary,
+    formattedAddress: primaryPlace.formattedAddress ?? secondaryPlace.formattedAddress,
+    googleMapsUri: primaryPlace.googleMapsUri ?? secondaryPlace.googleMapsUri,
+    location: primaryPlace.location ?? secondaryPlace.location,
+    photos: Array.isArray(primaryPlace.photos) && primaryPlace.photos.length > 0
+      ? primaryPlace.photos
+      : secondaryPlace.photos,
+    userRatingCount: primaryPlace.userRatingCount ?? secondaryPlace.userRatingCount,
+    rating: typeof primaryPlace.rating === 'number' ? primaryPlace.rating : secondaryPlace.rating,
+    priceLevel: primaryPlace.priceLevel ?? secondaryPlace.priceLevel,
+    regularOpeningHours: primaryPlace.regularOpeningHours ?? secondaryPlace.regularOpeningHours,
+  }
+}
+
 export async function resolvePlaceDetails(
   { placeId, userLocation, seedPlace },
   {
@@ -211,6 +304,7 @@ export async function resolvePlaceDetails(
 
   try {
     let place = null
+    let searchCandidates = []
 
     if (seedPlace?.googlePlaceId) {
       try {
@@ -220,16 +314,29 @@ export async function resolvePlaceDetails(
       }
     }
 
-    if (!place) {
+    if (!place || !Array.isArray(place.photos) || place.photos.length === 0 || !place.googleMapsUri) {
       const searchText = seedPlace.googleQuery ?? `${seedPlace.name} Dubai`
-      place = await searchGooglePlace(searchText, apiKey, allowedReferer)
+      searchCandidates = await searchGooglePlaces(searchText, apiKey, allowedReferer, 5)
+      const comparableCandidates = searchCandidates.filter((candidate) => isSimilarPlaceName(seedPlace, candidate))
+      const strongestCandidate = [...comparableCandidates].sort((left, right) => getPlaceScore(right) - getPlaceScore(left))[0] ?? null
+
+      if (!place) {
+        place = strongestCandidate
+      } else if (strongestCandidate && getPlaceScore(strongestCandidate) > getPlaceScore(place)) {
+        place = mergePlaces(strongestCandidate, place)
+      } else if (strongestCandidate) {
+        place = mergePlaces(place, strongestCandidate)
+      }
     }
 
     if (!place) {
       return fallback
     }
 
-    const photoUrls = await resolvePhotoUris(place.photos, apiKey, allowedReferer)
+    const photoSource = Array.isArray(place.photos) && place.photos.length > 0
+      ? place.photos
+      : (searchCandidates.find((candidate) => Array.isArray(candidate.photos) && candidate.photos.length > 0)?.photos ?? [])
+    const photoUrls = await resolvePhotoUris(photoSource, apiKey, allowedReferer)
     const photoUrl = photoUrls[0] ?? fallback.photoUrl
 
     return {
@@ -247,7 +354,7 @@ export async function resolvePlaceDetails(
       photoUrls: photoUrls.length > 0 ? photoUrls : fallback.photoUrls,
       formattedAddress: place.formattedAddress ?? fallback.formattedAddress,
       editorialSummary: place.editorialSummary?.text ?? fallback.editorialSummary,
-      googleMapsUri: place.googleMapsUri ?? fallback.googleMapsUri,
+      googleMapsUri: place.googleMapsUri ?? buildFallbackMapsUri(seedPlace, place) ?? fallback.googleMapsUri,
       lat: place.location?.latitude ?? fallback.lat,
       lng: place.location?.longitude ?? fallback.lng,
       openingHoursSummary: extractOpeningHoursSummary(place) ?? fallback.openingHoursSummary,
