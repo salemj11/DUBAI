@@ -199,8 +199,25 @@ async function resolvePhotoUris(photos, apiKey, allowedReferer) {
     return []
   }
 
+  const rankedPhotos = [...photos].sort((left, right) => {
+    const leftWidth = left?.widthPx ?? 0
+    const leftHeight = left?.heightPx ?? 1
+    const rightWidth = right?.widthPx ?? 0
+    const rightHeight = right?.heightPx ?? 1
+    const leftAspect = leftWidth / leftHeight
+    const rightAspect = rightWidth / rightHeight
+    const scorePhoto = (aspect, width, height) => {
+      const landscapeBonus = aspect >= 1.2 && aspect <= 1.9 ? 6 : aspect > 1 ? 3 : 0
+      const resolutionBonus = Math.min((width * height) / 400000, 6)
+
+      return landscapeBonus + resolutionBonus
+    }
+
+    return scorePhoto(rightAspect, rightWidth, rightHeight) - scorePhoto(leftAspect, leftWidth, leftHeight)
+  })
+
   const results = await Promise.all(
-    photos
+    rankedPhotos
       .slice(0, 6)
       .map((photo) => resolvePhotoUri(photo?.name, apiKey, allowedReferer))
   )

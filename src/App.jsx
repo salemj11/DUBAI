@@ -361,7 +361,7 @@ function PlaceBrowseCard({ place, details, selected, onClick, mapsUrl }) {
         fallback={place.img}
         alt={place.name}
         badge={category?.label}
-        height={200}
+        height={220}
         radius={20}
       />
       <div className="browse-place-copy">
