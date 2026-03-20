@@ -5,6 +5,7 @@ export const MAX_PLACE_SWIPES = 5
 export const FINAL_VOTE_SECONDS = 60
 export const TIMELINE_CONFIRMATION_THRESHOLD = 3
 export const TIMELINE_VOTE_TARGET = 5
+const LEGACY_TEST_PLAYERS = new Set(['Test2', 'Test3', 'Test4', 'Test5'])
 
 function nextId(prefix) {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -36,8 +37,6 @@ export function createNewRoom() {
     players: [],
     phase: 'lobby',
     round: 1,
-    isTestMode: false,
-    testPlayers: [],
     categoryOptions: ['food', 'chill', 'activity'],
     categoryVotes: {},
     categoryShowResults: false,
@@ -110,12 +109,14 @@ export function normalizeRoomState(room) {
     ...defaults,
     ...ensureObject(room),
   }
+  const rawPlayers = ensureArray(nextRoom.players)
+  const filteredPlayers = rawPlayers.filter((player) => !LEGACY_TEST_PLAYERS.has(player))
+  const removedLegacyPlayers = filteredPlayers.length !== rawPlayers.length
 
   nextRoom.hostName = typeof nextRoom.hostName === 'string' && nextRoom.hostName.trim()
     ? nextRoom.hostName.trim()
     : null
-  nextRoom.players = ensureArray(nextRoom.players)
-  nextRoom.testPlayers = ensureArray(nextRoom.testPlayers)
+  nextRoom.players = filteredPlayers
   nextRoom.categoryOptions = ensureArray(nextRoom.categoryOptions).filter(Boolean)
   nextRoom.categoryVotes = ensureObject(nextRoom.categoryVotes)
   nextRoom.subcatSwipes = ensureObject(nextRoom.subcatSwipes)
@@ -125,6 +126,31 @@ export function normalizeRoomState(room) {
   nextRoom.rouletteVotes = ensureObject(nextRoom.rouletteVotes)
   nextRoom.rouletteOptions = ensureArray(nextRoom.rouletteOptions).filter(Boolean)
   nextRoom.timelineEvents = ensureArray(nextRoom.timelineEvents).map(normalizeTimelineEvent)
+  delete nextRoom.isTestMode
+  delete nextRoom.testPlayers
+
+  if (removedLegacyPlayers || (nextRoom.phase !== 'lobby' && nextRoom.players.length < 2)) {
+    nextRoom.hostName = null
+    nextRoom.players = []
+    nextRoom.phase = 'lobby'
+    nextRoom.round = 1
+    nextRoom.categoryVotes = {}
+    nextRoom.categoryShowResults = false
+    nextRoom.winningCategory = null
+    nextRoom.subcatSwipes = {}
+    nextRoom.placeSwipes = {}
+    nextRoom.finalOptions = []
+    nextRoom.finalVotes = {}
+    nextRoom.finalMaxSelections = defaults.finalMaxSelections
+    nextRoom.finalVoteEndTime = null
+    nextRoom.finalRound = 1
+    nextRoom.finalShowResults = false
+    nextRoom.rouletteVotes = {}
+    nextRoom.rouletteOptions = []
+    nextRoom.rouletteWinner = null
+    nextRoom.rouletteStartedAt = null
+    nextRoom.decidedPlace = null
+  }
 
   return nextRoom
 }

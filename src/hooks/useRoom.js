@@ -188,7 +188,6 @@ export function useRoom() {
             currentRoom.phase !== 'lobby'
             || currentRoom.players.length > 0
             || currentRoom.timelineEvents.length > 0
-            || currentRoom.isTestMode === true
             || typeof currentRoom.hostName === 'string'
           )
 

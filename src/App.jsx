@@ -52,15 +52,8 @@ import {
 import "./App.css";
 
 const SWIPE_THRESHOLD = 80;
-const TEST_NAMES = ["Test2", "Test3", "Test4", "Test5"];
 const DEFAULT_USER_LOCATION = { lat: 25.1024, lng: 55.1495 };
 const JOINED_SESSION_STORAGE_KEY = "dubai-weekend-trip.joined-session";
-
-function getStoredTestPlayers(room) {
-  if (!Array.isArray(room?.testPlayers)) return [];
-
-  return room.testPlayers.filter((name) => typeof name === "string");
-}
 
 function uniqueNames(names) {
   return Array.from(new Set(names.filter((name) => typeof name === "string" && name.trim())));
@@ -104,25 +97,13 @@ function writeStoredJoinedSession(session) {
   window.sessionStorage.setItem(JOINED_SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
-function getLobbyDisplayPlayers(room, lobbyPlayers, me) {
+function getLobbyDisplayPlayers(lobbyPlayers, me) {
   const actualPlayers = uniqueNames(lobbyPlayers.map((player) => player.name));
   if (!me) {
     return actualPlayers.slice(0, MAX_PLAYERS);
   }
 
-  const basePlayers = actualPlayers.length > 0 ? actualPlayers : uniqueNames([me]);
-  const syntheticPlayers = getStoredTestPlayers(room)
-    .filter((name) => !basePlayers.includes(name))
-    .slice(0, Math.max(0, MAX_PLAYERS - basePlayers.length));
-
-  return [...basePlayers, ...syntheticPlayers].slice(0, MAX_PLAYERS);
-}
-
-function getAutomatedPlayers(room, me, roster = room.players) {
-  const rosterSet = new Set(Array.isArray(roster) ? roster : []);
-  const testPlayers = new Set(getStoredTestPlayers(room));
-
-  return Array.from(rosterSet).filter((player) => player !== me && testPlayers.has(player));
+  return (actualPlayers.length > 0 ? actualPlayers : uniqueNames([me])).slice(0, MAX_PLAYERS);
 }
 
 function formatDistance(distanceMeters) {
@@ -2055,10 +2036,8 @@ export default function App() {
   const playerLastSeenAtRef = useRef(new Map());
 
   const room = normalizeRoomState(roomState || createNewRoom());
-  const storedTestPlayers = getStoredTestPlayers(room);
   const liveLobbyNames = uniqueNames(lobby.players.map((player) => player.name));
-  const testMode = room.isTestMode === true;
-  const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
+  const liveLobbyPlayers = getLobbyDisplayPlayers(lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
   const allBrowseablePlaces = getAllPlaces().filter((place) => place.swipeEligible && !place.locked);
   const featuredPool = getPlacesByCategory(featuredCategory, { includeLocked: false })
@@ -2179,9 +2158,7 @@ export default function App() {
   useEffect(() => {
     if (!me) return;
 
-    const activeRoundPlayers = room.players.filter((player) => (
-      liveLobbyNames.includes(player) || storedTestPlayers.includes(player)
-    ));
+    const activeRoundPlayers = room.players.filter((player) => liveLobbyNames.includes(player));
     const availableHosts = room.phase === "lobby"
       ? (liveLobbyNames.length > 0 ? liveLobbyNames : uniqueNames([me]))
       : activeRoundPlayers;
@@ -2223,7 +2200,7 @@ export default function App() {
         };
       });
     }
-  }, [liveLobbyNames, me, room.hostName, room.phase, room.players, storedTestPlayers, update]);
+  }, [liveLobbyNames, me, room.hostName, room.phase, room.players, update]);
 
   useEffect(() => {
     const placesToHydrate = Array.from(new Map([
@@ -2445,12 +2422,11 @@ export default function App() {
     const pruneMissingPlayers = () => {
       const now = Date.now();
       const liveNames = new Set(lobby.players.map((player) => player.name));
-      const testPlayers = new Set(getStoredTestPlayers(room));
 
       if (!liveNames.has(me)) return;
 
       const nextPlayers = room.players.filter((player) => {
-        if (testPlayers.has(player) || liveNames.has(player)) {
+        if (liveNames.has(player)) {
           return true;
         }
 
@@ -2702,30 +2678,6 @@ export default function App() {
     resettingRoomRef.current = false;
   };
 
-  const fillTestPlayers = async () => {
-    await update((current) => {
-      const actualPlayers = uniqueNames([
-        ...lobby.players.map((player) => player.name),
-        me,
-      ]);
-      const syntheticPlayers = TEST_NAMES
-        .filter((name) => !actualPlayers.includes(name))
-        .slice(0, Math.max(0, MAX_PLAYERS - actualPlayers.length));
-
-      return {
-        ...current,
-        isTestMode: syntheticPlayers.length > 0,
-        testPlayers: syntheticPlayers,
-      };
-    });
-
-    showNotice({
-      tone: "success",
-      kicker: "Test players ready",
-      message: "The lobby is now topped up to 5/5 so you can run the full loop solo.",
-    });
-  };
-
   const handleStart = async () => {
     if (displayPlayers.length !== MAX_PLAYERS) return;
 
@@ -2743,135 +2695,6 @@ export default function App() {
     }));
   };
 
-  const simulateTestVotes = async (phase) => {
-    const automatedPlayers = getAutomatedPlayers(room, me, room.players);
-
-    if (automatedPlayers.length === 0) return;
-
-    if (phase === "category") {
-      await update((current) => {
-        const categoryVotes = { ...current.categoryVotes };
-        const preferredCategory = categoryVotes[me] ?? current.categoryOptions[0];
-
-        automatedPlayers.forEach((name) => {
-          if (!categoryVotes[name] && current.players.includes(name)) {
-            categoryVotes[name] = Math.random() < 0.75
-              ? preferredCategory
-              : current.categoryOptions[Math.floor(Math.random() * current.categoryOptions.length)];
-          }
-        });
-
-        return { ...current, categoryVotes };
-      });
-    }
-
-    if (phase === "subcat") {
-      await update((current) => {
-        const subcatSwipes = { ...current.subcatSwipes };
-
-        automatedPlayers.forEach((name) => {
-          if (!subcatSwipes[name] && current.players.includes(name)) {
-            const allIds = flattenSubcategoryOptions(current.winningCategory).map((item) => item.id);
-            subcatSwipes[name] = {
-              done: true,
-              right: allIds.filter(() => Math.random() > 0.38),
-            };
-          }
-        });
-
-        return { ...current, subcatSwipes };
-      });
-    }
-
-    if (phase === "place") {
-      await update((current) => {
-        const placeSwipes = { ...current.placeSwipes };
-        const activeTags = new Set();
-
-        Object.values(current.subcatSwipes).forEach((swipe) => {
-          swipe.right?.forEach((tag) => activeTags.add(tag));
-        });
-
-        automatedPlayers.forEach((name) => {
-          if (!placeSwipes[name] && current.players.includes(name)) {
-            const options = shuffleItems(getSwipeablePlaces(current.winningCategory, Array.from(activeTags)));
-
-            placeSwipes[name] = {
-              done: true,
-              right: options.slice(0, MAX_PLACE_SWIPES).map((place) => place.id),
-            };
-          }
-        });
-
-        return { ...current, placeSwipes };
-      });
-    }
-
-    if (phase === "final") {
-      await update((current) => {
-        const finalVotes = { ...current.finalVotes };
-        const preferredChoices = Array.isArray(finalVotes[me]) && finalVotes[me].length > 0
-          ? finalVotes[me]
-          : current.finalOptions.slice(0, Math.min(current.finalMaxSelections, current.finalOptions.length));
-
-        automatedPlayers.forEach((name) => {
-          if (!finalVotes[name] && current.players.includes(name)) {
-            finalVotes[name] = preferredChoices.slice(0, Math.min(current.finalMaxSelections, preferredChoices.length));
-          }
-        });
-
-        return { ...current, finalVotes };
-      });
-    }
-  };
-
-  const simulateTestTimelineVotes = async (eventId, remoteEventId = null) => {
-    const remoteTargetId = typeof remoteEventId === "string"
-      ? remoteEventId
-      : (mergedTimelineEvents.find((event) => (event.externalKey || event.id) === eventId)?.id ?? null);
-
-    if (remoteTargetId && getStoredTestPlayers(room).length > 0) {
-      await Promise.all(
-        getStoredTestPlayers(room).map((name, index) => (
-          voteOnEvent(remoteTargetId, name, index < 2 || Math.random() > 0.35 ? "yes" : "no")
-        ))
-      ).catch((error) => {
-        console.warn("Failed to simulate remote timeline votes.", error);
-      });
-
-      return;
-    }
-
-    await update((current) => {
-      if (getStoredTestPlayers(current).length === 0) {
-        return current;
-      }
-
-      const timelineEvents = current.timelineEvents.map((event) => {
-        const eventKey = event.externalKey || event.id;
-
-        if (eventKey !== eventId || event.locked || event.status !== "pending") {
-          return event;
-        }
-
-        const nextVotes = { ...event.votes };
-
-        getStoredTestPlayers(current).forEach((name, index) => {
-          if (!nextVotes[name]) {
-            nextVotes[name] = index < 2 || Math.random() > 0.35 ? "yes" : "no";
-          }
-        });
-
-        return normalizeTimelineEvents([{ ...event, votes: nextVotes }], displayPlayers.length)[0];
-      });
-
-      return {
-        ...current,
-        timelineEvents,
-      };
-    });
-  };
-
   async function doFinalSubmit() {
     if (submitted) return;
 
@@ -2883,12 +2706,6 @@ export default function App() {
         [me]: finalSel,
       },
     }));
-
-    if (testMode) {
-      window.setTimeout(() => {
-        void simulateTestVotes("final");
-      }, 600);
-    }
   }
 
   const handleCatVote = async () => {
@@ -2901,12 +2718,6 @@ export default function App() {
         [me]: selectedCat,
       },
     }));
-
-    if (testMode) {
-      window.setTimeout(() => {
-        void simulateTestVotes("category");
-      }, 600);
-    }
   };
 
   const handleCatReveal = async () => {
@@ -3010,12 +2821,6 @@ export default function App() {
             [me]: { done: true, right: nextRight },
           },
         }));
-
-        if (testMode) {
-          window.setTimeout(() => {
-            void simulateTestVotes("subcat");
-          }, 600);
-        }
       }
 
       return nextCards;
@@ -3093,12 +2898,6 @@ export default function App() {
             [me]: { done: true, right: nextRight },
           },
         }));
-
-        if (testMode) {
-          window.setTimeout(() => {
-            void simulateTestVotes("place");
-          }, 600);
-        }
       }
 
       return nextCards;
@@ -3252,23 +3051,6 @@ export default function App() {
         [me]: true,
       },
     }));
-
-    if (testMode) {
-      window.setTimeout(() => {
-        void update((current) => {
-          const rouletteVotes = { ...current.rouletteVotes };
-
-          getAutomatedPlayers(current, me, current.players).forEach((name) => {
-            rouletteVotes[name] = true;
-          });
-
-          return {
-            ...current,
-            rouletteVotes,
-          };
-        });
-      }, 500);
-    }
   };
 
   const openTimelineComposer = () => {
@@ -3372,12 +3154,6 @@ export default function App() {
       message: `${event.placeName} was added and your yes vote is already counted.`,
       eventId: remoteEvent?.external_key ?? event.externalKey,
     });
-
-    if (testMode) {
-      window.setTimeout(() => {
-        void simulateTestTimelineVotes(event.externalKey, remoteEvent?.id ?? null);
-      }, 550);
-    }
   };
 
   const handleDeleteTimelineEvent = async (eventId) => {
@@ -3447,12 +3223,6 @@ export default function App() {
         displayPlayers.length
       ),
     }));
-
-    if (testMode) {
-      window.setTimeout(() => {
-        void simulateTestTimelineVotes(eventId);
-      }, 450);
-    }
   };
 
   const handleSubmitCustomPlace = async () => {
@@ -3781,7 +3551,6 @@ export default function App() {
           }}
           onClose={() => setNotice(null)}
         />
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "28px 20px 40px", textAlign: "center" }}>
           <div className="lobby-hero fade-up">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
@@ -3789,7 +3558,7 @@ export default function App() {
                 <p className="timeline-kicker">Room Lobby</p>
                 <h2 className="syne" style={{ fontSize: 30, marginBottom: 8 }}>Weekend control room</h2>
                 <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.5 }}>
-                  Everyone joins here first. When the roster hits 5/5, the host starts the game. If you are testing solo, fill the room with bots and run the full loop.
+                  Everyone joins here first. When the roster hits 5/5, the host starts the game.
                 </p>
               </div>
               <div className="lobby-count-chip">{displayPlayers.length}/{MAX_PLAYERS}</div>
@@ -3818,12 +3587,6 @@ export default function App() {
               </div>
             ))}
           </div>
-          {isHost && !canStart && (
-            <button type="button" onClick={fillTestPlayers} className="ghost-danger" style={{ width: "100%", marginTop: 16, justifyContent: "center" }}>
-              <Sparkles size={16} />
-              Fill with test players
-            </button>
-          )}
           {isHost && (
             <button
               type="button"
@@ -3864,7 +3627,6 @@ export default function App() {
           }}
           onClose={() => setNotice(null)}
         />
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "28px 20px 40px" }}>
           <div className="lobby-hero fade-up">
             <p className="timeline-kicker">Main Menu</p>
@@ -3878,7 +3640,7 @@ export default function App() {
             <MenuActionCard
               icon={<Gamepad2 size={22} />}
               title="Pick or Lose"
-              copy="Join the live lobby, fill bots if needed, then run the full vote and swipe loop."
+              copy="Join the live lobby, wait for the full group, then run the full vote and swipe loop."
               meta={`${liveLobbyPlayers.length}/${MAX_PLAYERS} in lobby · ${getPhaseLabel(room.phase)}`}
               badge={liveLobbyPlayers.length > 0 ? `${liveLobbyPlayers.length}/${MAX_PLAYERS}` : null}
               accent="var(--gold)"
@@ -3972,7 +3734,6 @@ export default function App() {
           }}
           onClose={() => setNotice(null)}
         />
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "32px 20px" }}>
           <div style={{ textAlign: "center", marginBottom: 28 }}>
             <p style={{ color: "var(--gold)", fontSize: 12, fontWeight: 600, letterSpacing: 2, marginBottom: 4 }}>
@@ -4059,7 +3820,6 @@ export default function App() {
 
     return (
       <div className="app grain">
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div className="fade-up" style={{ padding: "32px 20px" }}>
           <h2 className="syne" style={{ fontSize: 24, marginBottom: 24, textAlign: "center" }}>
             {winner ? "We have a winner" : "Too split - revote"}
@@ -4111,7 +3871,6 @@ export default function App() {
 
       return (
         <div className="app grain">
-          {testMode && <div className="test-banner">TEST MODE</div>}
           <Waiting
             message="Nice picks"
             sub={`${doneCount}/${room.players.length} done swiping`}
@@ -4124,7 +3883,6 @@ export default function App() {
 
     return (
       <div className="app grain">
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "24px 20px" }}>
           <div style={{ textAlign: "center", marginBottom: 20 }}>
             <p style={{ fontSize: 12, fontWeight: 600, letterSpacing: 2, color: category?.color, marginBottom: 4 }}>
@@ -4167,7 +3925,6 @@ export default function App() {
 
       return (
         <div className="app grain">
-          {testMode && <div className="test-banner">TEST MODE</div>}
           <Waiting
             message="Picks locked in"
             sub={`${doneCount}/${room.players.length} done`}
@@ -4180,7 +3937,6 @@ export default function App() {
 
     return (
       <div className="app grain">
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "24px 20px" }}>
           <div style={{ textAlign: "center", marginBottom: 16 }}>
             <p style={{ fontSize: 12, fontWeight: 600, letterSpacing: 2, color: category?.color, marginBottom: 4 }}>
@@ -4255,7 +4011,6 @@ export default function App() {
     if (room.finalShowResults) {
       return (
         <div className="app grain">
-          {testMode && <div className="test-banner">TEST MODE</div>}
           <div className="fade-up" style={{ padding: "32px 20px 120px" }}>
             <div style={{ textAlign: "center", marginBottom: 24 }}>
               <p style={{ color: "var(--gold)", fontSize: 12, fontWeight: 600, letterSpacing: 2, marginBottom: 4 }}>
@@ -4318,7 +4073,6 @@ export default function App() {
 
     return (
       <div className="app grain">
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ padding: "24px 20px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
             <div>
@@ -4416,7 +4170,6 @@ export default function App() {
 
     return (
       <div className="app grain">
-        {testMode && <div className="test-banner">TEST MODE</div>}
         <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", padding: "32px 20px", textAlign: "center" }}>
           <p style={{ color: "#ffb76a", fontSize: 12, fontWeight: 800, letterSpacing: 2, marginBottom: 12 }}>ROULETTE TIEBREAKER</p>
           <h2 className="syne" style={{ fontSize: 32, marginBottom: 10 }}>Let fate call it</h2>
