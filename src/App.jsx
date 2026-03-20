@@ -375,6 +375,21 @@ function buildJourneyDay(day, placeDetailsById) {
   };
 }
 
+function getRouletteStepDelay(stepNumber, totalSteps) {
+  const progress = stepNumber / Math.max(totalSteps, 1);
+
+  if (progress < 0.28) {
+    return Math.round(150 - (progress / 0.28) * 88);
+  }
+
+  if (progress < 0.72) {
+    return Math.round(62 + ((progress - 0.28) / 0.44) * 26);
+  }
+
+  const finalProgress = (progress - 0.72) / 0.28;
+  return Math.round(120 + finalProgress * finalProgress * 420);
+}
+
 function PlacePhotoCarousel({
   photos,
   fallback,
@@ -2232,46 +2247,73 @@ export default function App() {
     const rouletteCount = room.players.filter((player) => room.rouletteVotes[player]).length;
 
     if (rouletteCount === room.players.length && room.players.length > 0) {
+      const winner = shuffleItems(room.finalOptions)[0] ?? null;
+
       void update((current) => ({
         ...current,
         phase: "roulette_spin",
         rouletteOptions: current.finalOptions,
         rouletteStartedAt: Date.now(),
-        rouletteWinner: null,
+        rouletteWinner: winner,
       }));
     }
-  }, [isHost, room.finalShowResults, room.phase, room.players, room.rouletteVotes, update]);
+  }, [isHost, room.finalOptions, room.finalShowResults, room.phase, room.players, room.rouletteVotes, update]);
 
   useEffect(() => {
-    if (room.phase !== "roulette_spin" || room.rouletteOptions.length === 0) return undefined;
+    if (
+      room.phase !== "roulette_spin"
+      || room.rouletteOptions.length === 0
+      || !room.rouletteWinner
+    ) {
+      return undefined;
+    }
 
-    const intervalId = window.setInterval(() => {
-      setRouletteCursor((current) => (current + 1) % room.rouletteOptions.length);
-    }, 120);
+    const winnerIndex = room.rouletteOptions.indexOf(room.rouletteWinner);
 
-    let timeoutId = null;
+    if (winnerIndex < 0) {
+      return undefined;
+    }
+
+    const scheduledTimeouts = [];
+    const optionCount = room.rouletteOptions.length;
+    let totalSteps = optionCount * 2 + winnerIndex;
+
+    while (totalSteps < 11) {
+      totalSteps += optionCount;
+    }
+
+    let elapsedMs = 0;
+    setRouletteCursor(0);
+
+    for (let step = 1; step <= totalSteps; step += 1) {
+      elapsedMs += getRouletteStepDelay(step, totalSteps);
+      const nextIndex = step % optionCount;
+
+      scheduledTimeouts.push(
+        window.setTimeout(() => {
+          setRouletteCursor(nextIndex);
+        }, elapsedMs)
+      );
+    }
 
     if (isHost) {
-      timeoutId = window.setTimeout(() => {
-        const winner = shuffleItems(room.rouletteOptions)[0];
-
-        void update((current) => ({
-          ...current,
-          rouletteWinner: winner,
-          decidedPlace: winner,
-          phase: "decided",
-        }));
-      }, 3400);
+      scheduledTimeouts.push(
+        window.setTimeout(() => {
+          void update((current) => ({
+            ...current,
+            decidedPlace: current.rouletteWinner,
+            phase: "decided",
+          }));
+        }, elapsedMs + 240)
+      );
     }
 
     return () => {
-      window.clearInterval(intervalId);
-
-      if (timeoutId) {
+      scheduledTimeouts.forEach((timeoutId) => {
         window.clearTimeout(timeoutId);
-      }
+      });
     };
-  }, [isHost, room.phase, room.rouletteOptions, update]);
+  }, [isHost, room.phase, room.rouletteOptions, room.rouletteWinner, update]);
 
   const bindEventRef = useCallback((eventId, node) => {
     if (node) {
