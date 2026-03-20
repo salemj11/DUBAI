@@ -1,40 +1,103 @@
 import { ensureAnonymousSupabaseSession, supabase } from '../supabase.js'
 
+let eventsBackendAvailable = true
+
+export function isEventsBackendAvailable() {
+  return eventsBackendAvailable
+}
+
 function assertDay(day) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
     throw new Error('day must be a YYYY-MM-DD string.')
   }
 }
 
+function trimString(value, maxLength = 160) {
+  if (typeof value !== 'string') return ''
+
+  return value.trim().slice(0, maxLength)
+}
+
+function isMissingEventsBackend(error) {
+  const code = String(error?.code ?? '')
+  const status = Number(error?.status ?? error?.statusCode ?? 0)
+  const message = String(error?.message ?? '').toLowerCase()
+  const details = String(error?.details ?? '').toLowerCase()
+  const hint = String(error?.hint ?? '').toLowerCase()
+  const combined = `${message} ${details} ${hint}`
+
+  return (
+    code === 'PGRST205'
+    || status === 404
+    || combined.includes('events')
+    || combined.includes('event_votes')
+    || combined.includes('schema cache')
+  )
+}
+
+function disableEventsBackend(error) {
+  if (!isMissingEventsBackend(error)) {
+    return false
+  }
+
+  eventsBackendAvailable = false
+  return true
+}
+
 export async function createEvent(input) {
+  if (!eventsBackendAvailable) {
+    return null
+  }
+
   assertDay(input.day)
   await ensureAnonymousSupabaseSession()
+
+  const placeName = trimString(input.placeName)
+  const createdBy = trimString(input.createdBy, 80)
+
+  if (!placeName) {
+    throw new Error('placeName is required.')
+  }
+
+  if (!createdBy) {
+    throw new Error('createdBy is required.')
+  }
 
   const { data, error } = await supabase
     .from('events')
     .insert({
-      external_key: input.externalKey ?? null,
+      external_key: trimString(input.externalKey, 120) || null,
       day: input.day,
       start_time: input.startTime,
       end_time: input.endTime,
-      category: input.category,
-      subcategory: input.subcategory ?? null,
-      place_id: input.placeId ?? null,
-      place_name: input.placeName,
-      created_by: input.createdBy,
-      status: input.status ?? 'pending',
-      locked: input.locked ?? false,
-      notes: input.notes ?? null,
+      category: trimString(input.category, 40) || 'activity',
+      subcategory: trimString(input.subcategory, 80) || null,
+      place_id: trimString(input.placeId, 120) || null,
+      place_name: placeName,
+      created_by: createdBy,
+      status: 'pending',
+      locked: false,
+      notes: trimString(input.notes, 320) || null,
     })
     .select('*')
     .single()
 
-  if (error) throw error
+  if (error) {
+    if (disableEventsBackend(error)) {
+      return null
+    }
+
+    throw error
+  }
 
   return data
 }
 
 export async function seedLockedTimelineEvents(events) {
+  if (!eventsBackendAvailable) {
+    return []
+  }
+
   await ensureAnonymousSupabaseSession()
 
   if (!Array.isArray(events) || events.length === 0) {
@@ -44,7 +107,13 @@ export async function seedLockedTimelineEvents(events) {
       .eq('created_by', 'system:locked')
       .eq('locked', true)
 
-    if (error) throw error
+    if (error) {
+      if (disableEventsBackend(error)) {
+        return []
+      }
+
+      throw error
+    }
 
     return []
   }
@@ -71,7 +140,13 @@ export async function seedLockedTimelineEvents(events) {
     })
     .select('*')
 
-  if (error) throw error
+  if (error) {
+    if (disableEventsBackend(error)) {
+      return []
+    }
+
+    throw error
+  }
 
   const lockedKeys = new Set(payload.map((event) => event.external_key))
   const { data: existingLocked, error: existingError } = await supabase
@@ -80,7 +155,13 @@ export async function seedLockedTimelineEvents(events) {
     .eq('created_by', 'system:locked')
     .eq('locked', true)
 
-  if (existingError) throw existingError
+  if (existingError) {
+    if (disableEventsBackend(existingError)) {
+      return data ?? []
+    }
+
+    throw existingError
+  }
 
   const staleIds = (existingLocked ?? [])
     .filter((event) => !lockedKeys.has(event.external_key))
@@ -92,28 +173,81 @@ export async function seedLockedTimelineEvents(events) {
       .delete()
       .in('id', staleIds)
 
-    if (deleteError) throw deleteError
+    if (deleteError) {
+      if (disableEventsBackend(deleteError)) {
+        return data ?? []
+      }
+
+      throw deleteError
+    }
   }
 
   return data ?? []
 }
 
 export async function listEventsForDay(day) {
+  if (!eventsBackendAvailable) {
+    return []
+  }
+
   assertDay(day)
   await ensureAnonymousSupabaseSession()
 
-  const { data, error } = await supabase
+  const { data: eventRows, error } = await supabase
     .from('events')
     .select('*')
     .eq('day', day)
     .order('start_time', { ascending: true })
 
-  if (error) throw error
+  if (error) {
+    if (disableEventsBackend(error)) {
+      return []
+    }
 
-  return data ?? []
+    throw error
+  }
+
+  const eventIds = (eventRows ?? []).map((event) => event.id).filter(Boolean)
+
+  if (eventIds.length === 0) {
+    return []
+  }
+
+  const { data: voteRows, error: voteError } = await supabase
+    .from('event_votes')
+    .select('event_id, user_id, vote')
+    .in('event_id', eventIds)
+
+  if (voteError) {
+    if (disableEventsBackend(voteError)) {
+      return (eventRows ?? []).map((event) => ({
+        ...event,
+        votes: {},
+      }))
+    }
+
+    throw voteError
+  }
+
+  const votesByEventId = new Map()
+
+  ;(voteRows ?? []).forEach((row) => {
+    const currentVotes = votesByEventId.get(row.event_id) ?? {}
+    currentVotes[row.user_id] = row.vote
+    votesByEventId.set(row.event_id, currentVotes)
+  })
+
+  return (eventRows ?? []).map((event) => ({
+    ...event,
+    votes: votesByEventId.get(event.id) ?? {},
+  }))
 }
 
 export async function voteOnEvent(eventId, userId, vote) {
+  if (!eventsBackendAvailable) {
+    return null
+  }
+
   await ensureAnonymousSupabaseSession()
 
   const { data, error } = await supabase
@@ -131,12 +265,45 @@ export async function voteOnEvent(eventId, userId, vote) {
     .select('*')
     .single()
 
-  if (error) throw error
+  if (error) {
+    if (disableEventsBackend(error)) {
+      return null
+    }
+
+    throw error
+  }
 
   return data
 }
 
+export async function deleteEvent(eventId) {
+  if (!eventsBackendAvailable) {
+    return false
+  }
+
+  await ensureAnonymousSupabaseSession()
+
+  const { error } = await supabase
+    .from('events')
+    .delete()
+    .eq('id', eventId)
+
+  if (error) {
+    if (disableEventsBackend(error)) {
+      return false
+    }
+
+    throw error
+  }
+
+  return true
+}
+
 export async function subscribeToEventFeed({ day, onEventChange, onVoteChange }) {
+  if (!eventsBackendAvailable) {
+    return async () => {}
+  }
+
   if (day) assertDay(day)
 
   await ensureAnonymousSupabaseSession()

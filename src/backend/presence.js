@@ -32,6 +32,10 @@ function writeResetVersion(value) {
   window.localStorage.setItem(RESET_VERSION_STORAGE_KEY, String(value))
 }
 
+export function getCurrentRoomResetVersion() {
+  return activeResetVersion
+}
+
 function createSnapshot(players, wasReset, resetRequestedAt) {
   return {
     players,

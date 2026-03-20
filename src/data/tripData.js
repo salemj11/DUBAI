@@ -1238,10 +1238,13 @@ export function mapEventRecordToTimelineEvent(eventRecord) {
     subcategory: eventRecord.subcategory,
     placeId: eventRecord.place_id,
     placeName: eventRecord.place_name,
+    createdBy: eventRecord.created_by ?? 'unknown',
+    createdAt: eventRecord.created_at ?? new Date().toISOString(),
     status: eventRecord.status,
     locked: eventRecord.locked === true,
     bookingStatus: eventRecord.locked === true ? 'booked' : 'open',
     notes: eventRecord.notes ?? null,
+    votes: eventRecord.votes ?? {},
     place,
   }
 }

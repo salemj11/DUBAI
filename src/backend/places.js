@@ -96,7 +96,6 @@ export async function fetchPlaceDetails(placeId, userLocation, seedPlace) {
         body: JSON.stringify({
           placeId,
           userLocation,
-          seedPlace,
         }),
       })
 

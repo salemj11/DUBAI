@@ -22,6 +22,7 @@ import { useRoom } from "./hooks/useRoom.js";
 import { useTimeline } from "./hooks/useTimeline.js";
 import { fetchPlaceDetails } from "./backend/places.js";
 import { listCustomPlaces, submitCustomPlaceSuggestion } from "./backend/customPlaces.js";
+import { createEvent, deleteEvent, voteOnEvent } from "./backend/events.js";
 import {
   getAllPlaces,
   CATEGORIES,
@@ -66,12 +67,12 @@ function uniqueNames(names) {
 }
 
 function readStoredJoinedSession() {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !window.sessionStorage) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(JOINED_SESSION_STORAGE_KEY) || "null");
+    const parsed = JSON.parse(window.sessionStorage.getItem(JOINED_SESSION_STORAGE_KEY) || "null");
 
     if (
       parsed
@@ -91,16 +92,16 @@ function readStoredJoinedSession() {
 }
 
 function writeStoredJoinedSession(session) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !window.sessionStorage) {
     return;
   }
 
   if (!session?.name || !/^\d{3}$/.test(session?.pin)) {
-    window.localStorage.removeItem(JOINED_SESSION_STORAGE_KEY);
+    window.sessionStorage.removeItem(JOINED_SESSION_STORAGE_KEY);
     return;
   }
 
-  window.localStorage.setItem(JOINED_SESSION_STORAGE_KEY, JSON.stringify(session));
+  window.sessionStorage.setItem(JOINED_SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
 function getLobbyDisplayPlayers(room, lobbyPlayers, me) {
@@ -2824,7 +2825,23 @@ export default function App() {
     }
   };
 
-  const simulateTestTimelineVotes = async (eventId) => {
+  const simulateTestTimelineVotes = async (eventId, remoteEventId = null) => {
+    const remoteTargetId = typeof remoteEventId === "string"
+      ? remoteEventId
+      : (mergedTimelineEvents.find((event) => (event.externalKey || event.id) === eventId)?.id ?? null);
+
+    if (remoteTargetId && getStoredTestPlayers(room).length > 0) {
+      await Promise.all(
+        getStoredTestPlayers(room).map((name, index) => (
+          voteOnEvent(remoteTargetId, name, index < 2 || Math.random() > 0.35 ? "yes" : "no")
+        ))
+      ).catch((error) => {
+        console.warn("Failed to simulate remote timeline votes.", error);
+      });
+
+      return;
+    }
+
     await update((current) => {
       if (getStoredTestPlayers(current).length === 0) {
         return current;
@@ -3316,10 +3333,35 @@ export default function App() {
       createdBy: me,
     });
 
-    await update((current) => ({
-      ...current,
-      timelineEvents: normalizeTimelineEvents([...current.timelineEvents, event], displayPlayers.length),
-    }));
+    let remoteEvent = null;
+
+    try {
+      remoteEvent = await createEvent({
+        externalKey: event.externalKey,
+        day: event.day,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        category: event.category,
+        subcategory: event.subcategory,
+        placeId: event.placeId,
+        placeName: event.placeName,
+        createdBy: event.createdBy,
+        notes: event.notes,
+      });
+    } catch (error) {
+      console.warn("Failed to create remote timeline event, storing locally instead.", error);
+    }
+
+    if (!remoteEvent) {
+      if (timelineSource === "live") {
+        console.warn("Timeline backend unavailable, storing event in local room state instead.");
+      }
+
+      await update((current) => ({
+        ...current,
+        timelineEvents: normalizeTimelineEvents([...current.timelineEvents, event], displayPlayers.length),
+      }));
+    }
 
     setTimelineComposerOpen(false);
     setTimelineDraft(createEmptyTimelineDraft(timelineDraft.day));
@@ -3328,21 +3370,30 @@ export default function App() {
       tone: "success",
       kicker: "Timeline updated",
       message: `${event.placeName} was added and your yes vote is already counted.`,
-      eventId: event.externalKey,
+      eventId: remoteEvent?.external_key ?? event.externalKey,
     });
 
     if (testMode) {
       window.setTimeout(() => {
-        void simulateTestTimelineVotes(event.externalKey);
+        void simulateTestTimelineVotes(event.externalKey, remoteEvent?.id ?? null);
       }, 550);
     }
   };
 
   const handleDeleteTimelineEvent = async (eventId) => {
     const eventToDelete = mergedTimelineEvents.find((event) => (event.externalKey || event.id) === eventId);
+    const isRemoteEvent = baseTimelineEvents.some((event) => (event.externalKey || event.id) === eventId);
 
     if (!eventToDelete || eventToDelete.locked) return;
     if (!window.confirm(`Delete ${eventToDelete.placeName} from the timeline?`)) return;
+
+    if (isRemoteEvent && eventToDelete.id) {
+      try {
+        await deleteEvent(eventToDelete.id);
+      } catch (error) {
+        console.warn("Failed to delete remote timeline event.", error);
+      }
+    }
 
     await update((current) => ({
       ...current,
@@ -3364,6 +3415,17 @@ export default function App() {
   };
 
   const handleVoteTimelineEvent = async (eventId, vote) => {
+    const eventToVote = mergedTimelineEvents.find((event) => (event.externalKey || event.id) === eventId);
+    const isRemoteEvent = baseTimelineEvents.some((event) => (event.externalKey || event.id) === eventId);
+
+    if (eventToVote?.id && isRemoteEvent && !eventToVote.locked) {
+      try {
+        await voteOnEvent(eventToVote.id, me, vote);
+      } catch (error) {
+        console.warn("Failed to vote on remote timeline event, falling back to local state.", error);
+      }
+    }
+
     await update((current) => ({
       ...current,
       timelineEvents: normalizeTimelineEvents(

@@ -1,10 +1,47 @@
 import { ensureAnonymousSupabaseSession, supabase } from '../supabase.js'
 
+let customPlacesBackendAvailable = true
+
 function normalizeCategory(category) {
   return ['food', 'chill', 'activity'].includes(category) ? category : 'food'
 }
 
+function trimString(value, maxLength = 200) {
+  if (typeof value !== 'string') return ''
+
+  return value.trim().slice(0, maxLength)
+}
+
+function isMissingCustomPlacesBackend(error) {
+  const code = String(error?.code ?? '')
+  const status = Number(error?.status ?? error?.statusCode ?? 0)
+  const message = String(error?.message ?? '').toLowerCase()
+  const details = String(error?.details ?? '').toLowerCase()
+  const hint = String(error?.hint ?? '').toLowerCase()
+  const combined = `${message} ${details} ${hint}`
+
+  return (
+    code === 'PGRST205'
+    || status === 404
+    || combined.includes('custom_places')
+    || combined.includes('schema cache')
+  )
+}
+
+function disableCustomPlacesBackend(error) {
+  if (!isMissingCustomPlacesBackend(error)) {
+    return false
+  }
+
+  customPlacesBackendAvailable = false
+  return true
+}
+
 export async function listCustomPlaces() {
+  if (!customPlacesBackendAvailable) {
+    return []
+  }
+
   await ensureAnonymousSupabaseSession()
 
   const { data, error } = await supabase
@@ -14,9 +51,7 @@ export async function listCustomPlaces() {
     .limit(20)
 
   if (error) {
-    const message = String(error.message || '')
-
-    if (message.includes('schema cache') || message.includes('custom_places')) {
+    if (disableCustomPlacesBackend(error)) {
       return []
     }
 
@@ -27,10 +62,14 @@ export async function listCustomPlaces() {
 }
 
 export async function submitCustomPlaceSuggestion(input) {
-  const name = typeof input?.name === 'string' ? input.name.trim() : ''
-  const area = typeof input?.area === 'string' ? input.area.trim() : ''
-  const notes = typeof input?.notes === 'string' ? input.notes.trim() : ''
-  const submittedBy = typeof input?.submittedBy === 'string' ? input.submittedBy.trim() : 'unknown'
+  if (!customPlacesBackendAvailable) {
+    throw new Error('Custom place submissions are not available right now.')
+  }
+
+  const name = trimString(input?.name, 120)
+  const area = trimString(input?.area, 120)
+  const notes = trimString(input?.notes, 400)
+  const submittedBy = trimString(input?.submittedBy, 80) || 'unknown'
 
   if (!name) {
     throw new Error('Place name is required.')
@@ -51,7 +90,13 @@ export async function submitCustomPlaceSuggestion(input) {
     .select('*')
     .single()
 
-  if (error) throw error
+  if (error) {
+    if (disableCustomPlacesBackend(error)) {
+      throw new Error('Custom place submissions are not available right now.')
+    }
+
+    throw error
+  }
 
   return data
 }

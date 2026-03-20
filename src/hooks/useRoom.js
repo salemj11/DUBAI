@@ -3,6 +3,7 @@ import {
   joinRoom as joinLobby,
   leaveRoom as leaveLobby,
   resetRoom as resetLobby,
+  getCurrentRoomResetVersion,
   subscribeToLobby,
 } from '../backend/presence.js'
 import { ensureAnonymousSupabaseSession, supabase } from '../supabase.js'
@@ -28,32 +29,34 @@ function validState(state) {
   return state && typeof state === 'object' && Array.isArray(state.players)
 }
 
-function readStoredRoom() {
+function readStoredRoom(currentResetVersion = 0) {
   if (typeof window === 'undefined') {
-    return { room: createNewRoom(), version: 0 }
+    return { room: createNewRoom(), version: 0, resetVersion: currentResetVersion }
   }
 
   try {
     const parsed = JSON.parse(window.localStorage.getItem(ROOM_STORAGE_KEY) || 'null')
+    const parsedResetVersion = Number.isFinite(parsed?.resetVersion) ? parsed.resetVersion : 0
 
-    if (validState(parsed?.room)) {
+    if (validState(parsed?.room) && parsedResetVersion >= currentResetVersion) {
       return {
         room: normalizeRoomState(parsed.room),
         version: Number.isFinite(parsed.version) ? parsed.version : 0,
+        resetVersion: parsedResetVersion,
       }
     }
 
-    if (validState(parsed)) {
-      return { room: normalizeRoomState(parsed), version: 0 }
+    if (validState(parsed) && parsedResetVersion >= currentResetVersion) {
+      return { room: normalizeRoomState(parsed), version: 0, resetVersion: parsedResetVersion }
     }
   } catch {
     // Ignore corrupt local cache and start fresh.
   }
 
-  return { room: createNewRoom(), version: 0 }
+  return { room: createNewRoom(), version: 0, resetVersion: currentResetVersion }
 }
 
-function writeStoredRoom(room, version) {
+function writeStoredRoom(room, version, resetVersion) {
   if (typeof window === 'undefined') return
 
   window.localStorage.setItem(
@@ -61,6 +64,7 @@ function writeStoredRoom(room, version) {
     JSON.stringify({
       room,
       version,
+      resetVersion,
     })
   )
 }
@@ -74,6 +78,7 @@ function parseSyncPayload(payload) {
     room: payload.room,
     senderId: typeof payload.senderId === 'string' ? payload.senderId : null,
     version: Number.isFinite(payload.version) ? payload.version : 0,
+    resetVersion: Number.isFinite(payload.resetVersion) ? payload.resetVersion : 0,
   }
 }
 
@@ -83,10 +88,15 @@ export function useRoom() {
   const [loading, setLoading] = useState(true)
   const roomRef = useRef(createNewRoom())
   const roomVersionRef = useRef(0)
+  const roomResetVersionRef = useRef(getCurrentRoomResetVersion())
   const roomChannelRef = useRef(null)
 
-  const applyRoomState = useCallback((nextRoom, version = Date.now()) => {
-    if (!validState(nextRoom) || version < roomVersionRef.current) {
+  const applyRoomState = useCallback((nextRoom, version = Date.now(), resetVersion = roomResetVersionRef.current) => {
+    if (
+      !validState(nextRoom)
+      || version < roomVersionRef.current
+      || resetVersion < roomResetVersionRef.current
+    ) {
       return
     }
 
@@ -94,7 +104,8 @@ export function useRoom() {
 
     roomRef.current = normalizedRoom
     roomVersionRef.current = version
-    writeStoredRoom(normalizedRoom, version)
+    roomResetVersionRef.current = resetVersion
+    writeStoredRoom(normalizedRoom, version, resetVersion)
     setRoom(normalizedRoom)
   }, [])
 
@@ -112,6 +123,7 @@ export function useRoom() {
         room: nextRoom,
         senderId: CLIENT_ID,
         version,
+        resetVersion: roomResetVersionRef.current,
       },
     })
 
@@ -123,9 +135,16 @@ export function useRoom() {
   useEffect(() => {
     let isMounted = true
     const unsubscribeLobby = subscribeToLobby((snapshot) => {
-      if (isMounted) setLobby(snapshot)
+      if (!isMounted) return
+
+      roomResetVersionRef.current = Math.max(roomResetVersionRef.current, snapshot.resetVersion ?? 0)
+      setLobby(snapshot)
+
+      if (snapshot.wasReset) {
+        applyRoomState(createNewRoom(), Date.now(), snapshot.resetVersion ?? roomResetVersionRef.current)
+      }
     })
-    const stored = readStoredRoom()
+    const stored = readStoredRoom(roomResetVersionRef.current)
     let channel = null
 
     async function boot() {
@@ -137,7 +156,7 @@ export function useRoom() {
 
       if (!isMounted) return
 
-      applyRoomState(stored.room, stored.version)
+      applyRoomState(stored.room, stored.version, stored.resetVersion)
       setLoading(false)
 
       channel = supabase.channel(ROOM_SYNC_TOPIC, {
@@ -159,7 +178,7 @@ export function useRoom() {
           }
 
           if (isMounted) {
-            applyRoomState(parsed.room, parsed.version)
+            applyRoomState(parsed.room, parsed.version, parsed.resetVersion)
           }
         })
         .on('broadcast', { event: ROOM_SYNC_REQUEST_EVENT }, ({ payload }) => {
@@ -212,11 +231,11 @@ export function useRoom() {
   }, [applyRoomState, broadcastRoomState])
 
   const updateRoom = useCallback(async (fn) => {
-    const current = validState(roomRef.current) ? roomRef.current : readStoredRoom().room
+    const current = validState(roomRef.current) ? roomRef.current : readStoredRoom(roomResetVersionRef.current).room
     const nextState = normalizeRoomState(fn(current))
     const version = Date.now()
 
-    applyRoomState(nextState, version)
+    applyRoomState(nextState, version, roomResetVersionRef.current)
     await broadcastRoomState(nextState, version)
 
     return nextState

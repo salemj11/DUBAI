@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import {
+  isEventsBackendAvailable,
   listEventsForDay,
   seedLockedTimelineEvents,
   subscribeToEventFeed,
@@ -28,6 +29,12 @@ export function useTimeline(enabled = true) {
 
     if (rejected) {
       throw rejected.reason
+    }
+
+    if (!isEventsBackendAvailable()) {
+      setTimelineEvents(FALLBACK_EVENTS)
+      setTimelineSource('fallback')
+      return FALLBACK_EVENTS
     }
 
     const remoteEvents = results.flatMap((result) => result.value ?? [])
@@ -65,6 +72,13 @@ export function useTimeline(enabled = true) {
 
             void refreshTimeline().catch((error) => {
               console.warn('Failed to refresh the live timeline after an event update.', error)
+            })
+          },
+          onVoteChange: () => {
+            if (!isMounted) return
+
+            void refreshTimeline().catch((error) => {
+              console.warn('Failed to refresh the live timeline after a vote update.', error)
             })
           },
         })
