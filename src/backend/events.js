@@ -13,6 +13,7 @@ export async function createEvent(input) {
   const { data, error } = await supabase
     .from('events')
     .insert({
+      external_key: input.externalKey ?? null,
       day: input.day,
       start_time: input.startTime,
       end_time: input.endTime,
@@ -21,7 +22,9 @@ export async function createEvent(input) {
       place_id: input.placeId ?? null,
       place_name: input.placeName,
       created_by: input.createdBy,
-      status: 'pending',
+      status: input.status ?? 'pending',
+      locked: input.locked ?? false,
+      notes: input.notes ?? null,
     })
     .select('*')
     .single()
@@ -29,6 +32,40 @@ export async function createEvent(input) {
   if (error) throw error
 
   return data
+}
+
+export async function seedLockedTimelineEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return []
+  }
+
+  await ensureAnonymousSupabaseSession()
+
+  const payload = events.map((event) => ({
+    external_key: event.externalKey,
+    day: event.day,
+    start_time: event.startTime,
+    end_time: event.endTime,
+    category: event.category,
+    subcategory: event.subcategory ?? null,
+    place_id: event.placeId ?? null,
+    place_name: event.placeName,
+    created_by: event.createdBy ?? 'system:locked',
+    status: event.status ?? 'confirmed',
+    locked: event.locked ?? true,
+    notes: event.notes ?? null,
+  }))
+
+  const { data, error } = await supabase
+    .from('events')
+    .upsert(payload, {
+      onConflict: 'external_key',
+    })
+    .select('*')
+
+  if (error) throw error
+
+  return data ?? []
 }
 
 export async function listEventsForDay(day) {

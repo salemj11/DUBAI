@@ -1,6 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, startTransition } from "react";
 import { Check, X, RotateCcw, Crown, Star } from "lucide-react";
 import { useRoom } from "./hooks/useRoom.js";
+import { useTimeline } from "./hooks/useTimeline.js";
+import { fetchPlaceDetails } from "./backend/places.js";
+import {
+  CATEGORIES,
+  SUBCATEGORIES,
+  getFeaturedPlaces,
+  getPlaceById,
+  getSwipeablePlaces,
+} from "./data/tripData.js";
 import "./App.css";
 
 const MAX_PLAYERS = 5;
@@ -8,76 +17,8 @@ const SWIPE_THRESHOLD = 80;
 const MAX_PLACE_SWIPES = 5;
 const FINAL_VOTE_SECONDS = 60;
 const TEST_NAMES = ["Test2", "Test3", "Test4", "Test5"];
-
-const CATEGORIES = [
-  { id: "food", label: "Food", emoji: "🍽️", color: "#F0A830", gradient: "linear-gradient(135deg, #F0A830, #E8832A)" },
-  { id: "chill", label: "Chill", emoji: "🌊", color: "#3ECFCF", gradient: "linear-gradient(135deg, #3ECFCF, #2A9FD6)" },
-  { id: "activity", label: "Activity", emoji: "⚡", color: "#C76BFF", gradient: "linear-gradient(135deg, #C76BFF, #8B5CF6)" },
-];
-
-const SUBCATEGORIES = {
-  food: {
-    cuisine: [
-      { id: "indian", label: "Indian", emoji: "🍛" },
-      { id: "italian", label: "Italian", emoji: "🍝" },
-      { id: "japanese", label: "Japanese", emoji: "🍣" },
-      { id: "arabic", label: "Arabic", emoji: "🥙" },
-      { id: "greek", label: "Greek", emoji: "🫒" },
-      { id: "mediterranean", label: "Mediterranean", emoji: "🥗" },
-      { id: "chinese", label: "Chinese", emoji: "🥟" },
-      { id: "mexican", label: "Mexican", emoji: "🌮" },
-      { id: "korean", label: "Korean", emoji: "🍜" },
-      { id: "thai", label: "Thai", emoji: "🍲" },
-      { id: "seafood", label: "Seafood", emoji: "🦐" },
-      { id: "american", label: "American", emoji: "🍔" },
-    ],
-    location: [
-      { id: "dubai-mall", label: "Dubai Mall", emoji: "🏬" },
-      { id: "jumeirah", label: "Jumeirah", emoji: "🏖️" },
-      { id: "emirates-mall", label: "Emirates Mall", emoji: "🛍️" },
-      { id: "d3", label: "D3", emoji: "🎨" },
-      { id: "marina", label: "Marina", emoji: "⛵" },
-      { id: "jbr", label: "JBR", emoji: "🌴" },
-      { id: "downtown", label: "Downtown", emoji: "🏙️" },
-      { id: "difc", label: "DIFC", emoji: "💼" },
-    ],
-  },
-  chill: {
-    type: [
-      { id: "beach", label: "Beach", emoji: "🏖️" },
-      { id: "pool", label: "Pool", emoji: "🏊" },
-      { id: "mall", label: "Mall", emoji: "🛍️" },
-      { id: "coffee", label: "Coffee", emoji: "☕" },
-      { id: "shisha", label: "Shisha", emoji: "💨" },
-    ],
-  },
-};
-
-const ALL_PLACES = [
-  { id: "f1", name: "Carnival by Tresind", cat: "food", tags: ["indian", "difc"], cost: 4, rating: 4.7, vibe: "Playful, high-energy Indian fine dining that feels like a proper Saturday-night spot.", img: "🎭" },
-  { id: "f2", name: "Naughty Pizza Dubai", cat: "food", tags: ["italian", "d3"], cost: 2, rating: 5.0, vibe: "Lively, easy Italian place with a fun crowd and a casual-but-still-cool feel.", img: "🍕" },
-  { id: "f3", name: "Buddha-Bar", cat: "food", tags: ["japanese", "marina"], cost: 4, rating: 4.6, vibe: "Dark, dramatic, and polished with a dressed-up Dubai dinner energy.", img: "🍣" },
-  { id: "f4", name: "ZETA Seventy Seven", cat: "food", tags: ["japanese", "jbr"], cost: 4, rating: 4.7, vibe: "High-floor rooftop dining with skyline views and a flashy late-evening mood.", img: "🌃" },
-  { id: "f5", name: "The Noodle House - JBR", cat: "food", tags: ["japanese", "jbr"], cost: 2, rating: 4.9, vibe: "Busy, reliable, and easy for a casual lunch or low-stress group meal.", img: "🍜" },
-  { id: "f6", name: "Vyne", cat: "food", tags: ["mediterranean", "d3"], cost: 2, rating: 4.8, vibe: "Relaxed terrace-style meal with a polished hotel feel and softer energy.", img: "🥗" },
-  { id: "f7", name: "Eat Greek Kouzina", cat: "food", tags: ["greek", "jbr"], cost: 2, rating: 4.6, vibe: "Bright waterfront Greek spot that works well for an unfussy daytime meal.", img: "🫒" },
-  { id: "f8", name: "Bolle Italian Restaurant & Bar DIFC", cat: "food", tags: ["italian", "difc"], cost: 2, rating: 4.5, vibe: "Clean, business-district Italian that feels smooth and easy rather than overhyped.", img: "🍝" },
-  { id: "f9", name: "Operation Falafel The Beach Mall JBR", cat: "food", tags: ["arabic", "jbr"], cost: 1, rating: 4.3, vibe: "Cheap, quick, and solid for a late bite without turning it into a whole event.", img: "🥙" },
-  { id: "c1", name: "AURA SKYPOOL", cat: "chill", tags: ["pool"], cost: 4, rating: 4.9, vibe: "Luxury infinity-pool hang with unreal views and a premium sunset crowd.", img: "🏊" },
-  { id: "c2", name: "Cloud 22", cat: "chill", tags: ["pool"], cost: 4, rating: 4.7, vibe: "Flashy rooftop pool scene with a polished, high-spend Palm vibe.", img: "☁️" },
-  { id: "c3", name: "Zero Gravity", cat: "chill", tags: ["beach", "pool"], cost: 3, rating: 4.7, vibe: "One of the best day-to-night beach club options if you want energy without full club pressure.", img: "🏖️" },
-  { id: "c4", name: "Bla Bla Dubai", cat: "chill", tags: ["beach"], cost: 3, rating: 4.4, vibe: "Big social venue at JBR that works for lounging early and staying on later if the mood builds.", img: "🌴" },
-  { id: "c5", name: "Marina Beach", cat: "chill", tags: ["beach"], cost: 1, rating: 4.4, vibe: "Simple no-booking beach option when you just want sun, water, and a walk.", img: "🌊" },
-  { id: "c6", name: "Dubai Marina Mall", cat: "chill", tags: ["mall"], cost: 2, rating: 4.1, vibe: "Easy indoor reset with food, coffee, and zero effort if everyone is moving slow.", img: "🛍️" },
-  { id: "c7", name: "Aaliya Shisha Lounge", cat: "chill", tags: ["shisha"], cost: 2, rating: 4.9, vibe: "Laid-back Arabic lounge for a slower evening when you want to sit and vibe.", img: "💨" },
-  { id: "c8", name: "Vyne Coffee", cat: "chill", tags: ["coffee"], cost: 2, rating: 4.8, vibe: "Good fallback for a coffee-and-catch-up window with a calm terrace atmosphere.", img: "☕" },
-  { id: "a1", name: "Topgolf Dubai", cat: "activity", tags: [], cost: 2, rating: 4.6, vibe: "Competitive but relaxed group activity that works especially well at night.", img: "⛳" },
-  { id: "a2", name: "Dubai Marina Luxury Yacht Tour", cat: "activity", tags: [], cost: 2, rating: 4.9, vibe: "Easy flex activity with skyline views and a proper Dubai feel without needing a full charter.", img: "🛥️" },
-  { id: "a3", name: "Dubai Aladdin Tour: Souks, Creek & Old Dubai", cat: "activity", tags: [], cost: 1, rating: 4.9, vibe: "A slower, more cultural switch-up if you want one block of the trip to feel different.", img: "🕌" },
-  { id: "a4", name: "Dubai Red Dunes Desert Safari", cat: "activity", tags: [], cost: 2, rating: 5.0, vibe: "Classic Dubai adrenaline session with enough variety to feel like a full outing.", img: "🏜️" },
-  { id: "a5", name: "IMG Worlds of Adventure", cat: "activity", tags: [], cost: 3, rating: 3.9, vibe: "Indoor, easy, and good for a long high-energy block if the weather or timing gets awkward.", img: "🎢" },
-  { id: "a6", name: "Museum of the Future", cat: "activity", tags: [], cost: 2, rating: 3.3, vibe: "More about the iconic building and photo value than a pure thrill experience.", img: "🔮" },
-];
+const DEFAULT_USER_LOCATION = { lat: 25.2048, lng: 55.2708 };
+const FEATURED_PLACES = getFeaturedPlaces().slice(0, 6);
 
 function newRoom() {
   return {
@@ -117,6 +58,169 @@ function getAutomatedPlayers(room, me) {
   const testPlayers = new Set(getStoredTestPlayers(room));
 
   return room.players.filter((player) => player !== me && testPlayers.has(player));
+}
+
+function formatDistance(distanceMeters) {
+  if (!distanceMeters) return "Near you";
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m away`;
+  return `${(distanceMeters / 1000).toFixed(1)} km away`;
+}
+
+function describeBusyness(currentBusyness) {
+  if (typeof currentBusyness !== "number") return null;
+  if (currentBusyness >= 80) return { label: "Peak rush", tone: "var(--red)", background: "var(--redd)" };
+  if (currentBusyness >= 55) return { label: "Buzzing", tone: "var(--gold)", background: "var(--gd)" };
+  return { label: "Easy pace", tone: "var(--green)", background: "var(--grnd)" };
+}
+
+function shuffleItems(items) {
+  const next = [...items];
+
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+
+  return next;
+}
+
+function formatTimelineTime(value) {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Dubai",
+  }).format(new Date(value));
+}
+
+function getTimelineTone(event) {
+  if (event.locked) {
+    return { label: "LOCKED", background: "var(--gd)", color: "var(--gold)" };
+  }
+
+  if (event.status === "cancelled") {
+    return { label: "CANCELLED", background: "var(--redd)", color: "var(--red)" };
+  }
+
+  if (event.status === "confirmed") {
+    return { label: "CONFIRMED", background: "var(--grnd)", color: "var(--green)" };
+  }
+
+  return { label: "PENDING", background: "var(--s)", color: "var(--td)" };
+}
+
+function TimelinePanel({ timelineDays, timelineSource, placeDetailsById }) {
+  return (
+    <div className="timeline-panel fade-up s3">
+      <div className="timeline-panel-head">
+        <div>
+          <p className="timeline-kicker">Weekend Timeline</p>
+          <h3 className="syne" style={{ fontSize: 20 }}>Locked anchors first</h3>
+        </div>
+        <span className={`timeline-source ${timelineSource === "live" ? "live" : "fallback"}`}>
+          {timelineSource === "live" ? "LIVE" : "LOCAL"}
+        </span>
+      </div>
+      <div className="timeline-days">
+        {timelineDays.map((day) => (
+          <div key={day.day} className="timeline-day-card">
+            <div style={{ marginBottom: 12 }}>
+              <p className="timeline-day-label">{day.shortLabel}</p>
+              <p className="timeline-day-sub">{day.label}</p>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {day.events.length > 0 ? day.events.map((event) => {
+                const place = event.place;
+                const details = place ? placeDetailsById[place.id] : null;
+                const tone = getTimelineTone(event);
+
+                return (
+                  <div key={event.externalKey || event.id} className="timeline-event-card">
+                    <div className="timeline-event-main">
+                      <div className="timeline-time">
+                        <span>{formatTimelineTime(event.startTime)}</span>
+                        <span className="timeline-time-divider" />
+                        <span>{formatTimelineTime(event.endTime)}</span>
+                      </div>
+                      <div className="timeline-event-copy">
+                        <p className="timeline-event-title">{event.title}</p>
+                        <p className="timeline-event-meta">
+                          {details?.formattedAddress || place?.area || "Dubai"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="timeline-event-foot">
+                      <span style={{
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        background: tone.background,
+                        color: tone.color,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: 1.1,
+                      }}>
+                        {tone.label}
+                      </span>
+                      {place?.emoji && <span style={{ fontSize: 18 }}>{place.emoji}</span>}
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div className="timeline-empty">Open window for more chaos.</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FeaturedPlacesRail({ places, placeDetailsById }) {
+  return (
+    <div className="featured-panel fade-up s4">
+      <div className="timeline-panel-head">
+        <div>
+          <p className="timeline-kicker">Curated Deck</p>
+          <h3 className="syne" style={{ fontSize: 20 }}>The kind of spots in rotation</h3>
+        </div>
+      </div>
+      <div className="featured-grid">
+        {places.map((place, index) => {
+          const details = placeDetailsById[place.id];
+          const category = CATEGORIES.find((item) => item.id === place.cat);
+
+          return (
+            <div key={place.id} className={`featured-card card-enter s${Math.min(index + 1, 5)}`}>
+              <div className="featured-image-wrap">
+                {details?.photoUrl ? (
+                  <img className="featured-image" src={details.photoUrl} alt={place.name} />
+                ) : (
+                  <div className="featured-image-fallback" style={{ background: `${category?.color}18` }}>
+                    {place.img}
+                  </div>
+                )}
+                <div className="featured-image-scrim" />
+                <span className="featured-badge">{category?.label}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div>
+                  <p className="featured-name">{details?.name || place.name}</p>
+                  <p className="featured-meta">{place.area}</p>
+                </div>
+                <p className="featured-copy">{details?.editorialSummary || place.vibe}</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {place.displayTags.slice(0, 2).map((tag) => (
+                    <span key={tag} className="featured-chip">{tag}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function Dots({ players, max }) {
@@ -237,6 +341,7 @@ function SwipeStack({ cards, onSwipe, swipesLeft, maxSwipes, renderCard }) {
 
 export default function App() {
   const { room: roomState, lobby, updateRoom, loading, joinLobby, leaveLobby, resetLobby } = useRoom();
+  const { timelineDays, timelineSource } = useTimeline();
   const [me, setMe] = useState(null);
   const [nameInput, setNameInput] = useState("");
   const [pinInput, setPinInput] = useState("");
@@ -249,6 +354,7 @@ export default function App() {
   const [placeRight, setPlaceRight] = useState([]);
   const [placeSwipesLeft, setPlaceSwipesLeft] = useState(MAX_PLACE_SWIPES);
   const [placeDone, setPlaceDone] = useState(false);
+  const [placeDetailsById, setPlaceDetailsById] = useState({});
   const [finalSel, setFinalSel] = useState([]);
   const [timerLeft, setTimerLeft] = useState(FINAL_VOTE_SECONDS);
   const [submitted, setSubmitted] = useState(false);
@@ -258,6 +364,50 @@ export default function App() {
   const testMode = room.isTestMode === true;
   const liveLobbyPlayers = getLobbyDisplayPlayers(room, lobby.players, me);
   const displayPlayers = room.phase === "lobby" ? liveLobbyPlayers : room.players;
+  const timelinePlaces = timelineDays.flatMap((day) => day.events.map((event) => event.place).filter(Boolean));
+
+  useEffect(() => {
+    const placesToHydrate = Array.from(new Map([
+      ...FEATURED_PLACES.map((place) => [place.id, place]),
+      ...timelinePlaces.map((place) => [place.id, place]),
+      ...placeCards.map((place) => [place.id, place]),
+      ...(room?.finalOptions || []).map((placeId) => {
+        const place = getPlaceById(placeId);
+        return place ? [place.id, place] : null;
+      }),
+      (() => {
+        const place = getPlaceById(room?.decidedPlace);
+        return place ? [place.id, place] : null;
+      })(),
+    ].filter(Boolean)).values());
+    const missingPlaces = placesToHydrate.filter((place) => !placeDetailsById[place.id]);
+
+    if (missingPlaces.length === 0) return;
+
+    let cancelled = false;
+
+    void Promise.all(
+      missingPlaces.map(async (place) => [place.id, await fetchPlaceDetails(place.id, DEFAULT_USER_LOCATION, place)])
+    ).then((entries) => {
+      if (cancelled) return;
+
+      startTransition(() => {
+        setPlaceDetailsById((current) => {
+          const next = { ...current };
+          entries.forEach(([placeId, details]) => {
+            next[placeId] = details;
+          });
+          return next;
+        });
+      });
+    }).catch((error) => {
+      console.error("Failed to load place details.", error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [placeCards, placeDetailsById, room?.decidedPlace, room?.finalOptions, timelinePlaces]);
 
   const resetLocalUi = useCallback(() => {
     clearInterval(timerRef.current);
@@ -308,38 +458,56 @@ export default function App() {
     if (phase === "category") {
       await update((r) => {
         const opts = r.categoryOptions;
-        automatedPlayers.forEach((n) => { if (!r.categoryVotes[n] && r.players.includes(n)) r.categoryVotes[n] = opts[Math.random() < 0.5 ? 0 : Math.floor(Math.random() * opts.length)]; });
-        return { ...r };
+        const categoryVotes = { ...r.categoryVotes };
+        const preferredCategory = categoryVotes[me] ?? opts[0];
+        automatedPlayers.forEach((n) => {
+          if (!categoryVotes[n] && r.players.includes(n)) {
+            categoryVotes[n] = Math.random() < 0.75
+              ? preferredCategory
+              : opts[Math.floor(Math.random() * opts.length)];
+          }
+        });
+        return { ...r, categoryVotes };
       });
     } else if (phase === "subcat") {
       await update((r) => {
+        const subcatSwipes = { ...r.subcatSwipes };
         automatedPlayers.forEach((n) => {
-          if (!r.subcatSwipes[n] && r.players.includes(n)) {
+          if (!subcatSwipes[n] && r.players.includes(n)) {
             const subcats = SUBCATEGORIES[r.winningCategory];
             const allIds = []; Object.values(subcats || {}).forEach((items) => items.forEach((it) => allIds.push(it.id)));
-            r.subcatSwipes[n] = { done: true, right: allIds.filter(() => Math.random() > 0.4) };
+            subcatSwipes[n] = { done: true, right: allIds.filter(() => Math.random() > 0.4) };
           }
         });
-        return { ...r };
+        return { ...r, subcatSwipes };
       });
     } else if (phase === "place") {
       await update((r) => {
+        const placeSwipes = { ...r.placeSwipes };
+        const activeTags = new Set();
+        if (r.subcatSwipes) {
+          Object.values(r.subcatSwipes).forEach((swipe) => swipe.right?.forEach((tag) => activeTags.add(tag)));
+        }
         automatedPlayers.forEach((n) => {
-          if (!r.placeSwipes[n] && r.players.includes(n)) {
-            const catPlaces = ALL_PLACES.filter((p) => p.cat === r.winningCategory);
-            r.placeSwipes[n] = { done: true, right: catPlaces.sort(() => Math.random() - 0.5).slice(0, MAX_PLACE_SWIPES).map((p) => p.id) };
+          if (!placeSwipes[n] && r.players.includes(n)) {
+            const catPlaces = shuffleItems(getSwipeablePlaces(r.winningCategory, Array.from(activeTags)));
+            placeSwipes[n] = { done: true, right: catPlaces.slice(0, MAX_PLACE_SWIPES).map((p) => p.id) };
           }
         });
-        return { ...r };
+        return { ...r, placeSwipes };
       });
     } else if (phase === "final") {
       await update((r) => {
+        const finalVotes = { ...r.finalVotes };
+        const preferredChoices = Array.isArray(finalVotes[me]) && finalVotes[me].length > 0
+          ? finalVotes[me]
+          : r.finalOptions.slice(0, Math.min(r.finalMaxSelections, r.finalOptions.length));
         automatedPlayers.forEach((n) => {
-          if (!r.finalVotes[n] && r.players.includes(n)) {
-            r.finalVotes[n] = r.finalOptions.sort(() => Math.random() - 0.5).slice(0, Math.min(r.finalMaxSelections, r.finalOptions.length));
+          if (!finalVotes[n] && r.players.includes(n)) {
+            finalVotes[n] = preferredChoices.slice(0, Math.min(r.finalMaxSelections, preferredChoices.length));
           }
         });
-        return { ...r };
+        return { ...r, finalVotes };
       });
     }
   };
@@ -347,7 +515,13 @@ export default function App() {
   async function doFinalSubmit() {
     if (submitted) return;
     setSubmitted(true);
-    await update((r) => { r.finalVotes[me] = finalSel; return { ...r }; });
+    await update((r) => ({
+      ...r,
+      finalVotes: {
+        ...r.finalVotes,
+        [me]: finalSel,
+      },
+    }));
     if (testMode) setTimeout(() => simulateTestVotes("final"), 600);
   }
 
@@ -406,16 +580,21 @@ export default function App() {
 
   const handleCatVote = async () => {
     if (!selectedCat) return;
-    await update((r) => { r.categoryVotes[me] = selectedCat; return { ...r }; });
+    await update((r) => ({
+      ...r,
+      categoryVotes: {
+        ...r.categoryVotes,
+        [me]: selectedCat,
+      },
+    }));
     if (testMode) setTimeout(() => simulateTestVotes("category"), 600);
   };
 
   const handleCatReveal = async () => { await update((r) => ({ ...r, categoryShowResults: true })); };
 
   function initPlaceCards(cat, rightSubcats) {
-    let filtered = ALL_PLACES.filter((p) => p.cat === cat);
-    if (rightSubcats && rightSubcats.length > 0) filtered = filtered.filter((p) => p.tags.length === 0 || p.tags.some((t) => rightSubcats.includes(t)));
-    setPlaceCards(filtered.sort(() => Math.random() - 0.5));
+    const filtered = getSwipeablePlaces(cat, rightSubcats);
+    setPlaceCards(shuffleItems(filtered));
     setPlaceRight([]); setPlaceSwipesLeft(MAX_PLACE_SWIPES); setPlaceDone(false);
   }
 
@@ -453,10 +632,16 @@ export default function App() {
   // ONLY initializes — never checks for completion.
   useEffect(() => {
     if (room?.phase === "subcat_swipe" && room?.winningCategory && !subcatDone && subcatCards.length === 0) {
-      setSubcatCards(buildSubcatCards(room.winningCategory));
-      setSubcatRight([]);
+      const timeoutId = window.setTimeout(() => {
+        startTransition(() => {
+          setSubcatCards(buildSubcatCards(room.winningCategory));
+          setSubcatRight([]);
+        });
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [room?.phase, room?.winningCategory]);
+  }, [room?.phase, room?.winningCategory, subcatCards.length, subcatDone]);
 
   const handleSubcatSwipe = (dir, card) => {
     const rights = dir === "right" ? [...subcatRight, card.id] : [...subcatRight];
@@ -465,7 +650,13 @@ export default function App() {
       const next = prev.slice(1);
       if (next.length === 0) {
         setSubcatDone(true);
-        update((r) => { r.subcatSwipes[me] = { done: true, right: rights }; return { ...r }; });
+        update((r) => ({
+          ...r,
+          subcatSwipes: {
+            ...r.subcatSwipes,
+            [me]: { done: true, right: rights },
+          },
+        }));
         if (testMode) setTimeout(() => simulateTestVotes("subcat"), 600);
       }
       return next;
@@ -478,9 +669,13 @@ export default function App() {
     if (allDone && room.players.length === MAX_PLAYERS) {
       const allR = new Set(); Object.values(room.subcatSwipes).forEach((s) => s.right?.forEach((id) => allR.add(id)));
       update((r) => ({ ...r, phase: "place_swipe", placeSwipes: {} }));
-      initPlaceCards(room.winningCategory, Array.from(allR));
+      const timeoutId = window.setTimeout(() => {
+        initPlaceCards(room.winningCategory, Array.from(allR));
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [room?.subcatSwipes, room?.phase]);
+  }, [room?.phase, room?.players, room?.subcatSwipes, room?.winningCategory, update]);
 
   // Non-host path: populate place cards when phase arrives via Realtime.
   // ONLY initializes — never checks for completion.
@@ -488,9 +683,13 @@ export default function App() {
     if (room?.phase === "place_swipe" && room?.winningCategory && !placeDone && placeCards.length === 0) {
       const allR = new Set();
       if (room.subcatSwipes) Object.values(room.subcatSwipes).forEach((s) => s.right?.forEach((id) => allR.add(id)));
-      initPlaceCards(room.winningCategory, Array.from(allR));
+      const timeoutId = window.setTimeout(() => {
+        initPlaceCards(room.winningCategory, Array.from(allR));
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [room?.phase, room?.winningCategory]);
+  }, [placeCards.length, placeDone, room?.phase, room?.subcatSwipes, room?.winningCategory]);
 
   const handlePlaceSwipe = (dir, card) => {
     const newRight = dir === "right" ? [...placeRight, card.id] : [...placeRight];
@@ -501,7 +700,13 @@ export default function App() {
       const next = prev.slice(1);
       if (next.length === 0 || newSwipesLeft <= 0) {
         setPlaceDone(true);
-        update((r) => { r.placeSwipes[me] = { done: true, right: newRight }; return { ...r }; });
+        update((r) => ({
+          ...r,
+          placeSwipes: {
+            ...r.placeSwipes,
+            [me]: { done: true, right: newRight },
+          },
+        }));
         if (testMode) setTimeout(() => simulateTestVotes("place"), 600);
       }
       return next;
@@ -515,9 +720,17 @@ export default function App() {
       const union = new Set(); Object.values(room.placeSwipes).forEach((s) => s.right?.forEach((id) => union.add(id)));
       const opts = Array.from(union);
       update((r) => ({ ...r, phase: "final_vote", finalOptions: opts, finalVotes: {}, finalMaxSelections: Math.min(4, opts.length), finalVoteEndTime: Date.now() + FINAL_VOTE_SECONDS * 1000, finalRound: 1, finalShowResults: false }));
-      setFinalSel([]); setSubmitted(false); setTimerLeft(FINAL_VOTE_SECONDS);
+      const timeoutId = window.setTimeout(() => {
+        startTransition(() => {
+          setFinalSel([]);
+          setSubmitted(false);
+          setTimerLeft(FINAL_VOTE_SECONDS);
+        });
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
-  }, [room?.placeSwipes, room?.phase]);
+  }, [room?.phase, room?.placeSwipes, room?.players, update]);
 
   const toggleFinal = (id) => {
     if (submitted) return;
@@ -594,9 +807,19 @@ export default function App() {
     return (
       <div className="app grain">
         {testMode && <div className="test-banner">TEST MODE</div>}
-        <div style={{ padding: "40px 24px", textAlign: "center" }}>
-          <h2 className="syne fade-up" style={{ fontSize: 28, marginBottom: 8 }}>Waiting Room</h2>
-          <p className="fade-up s1" style={{ color: "var(--td)", marginBottom: 32 }}>{displayPlayers.length}/{MAX_PLAYERS} players</p>
+        <div style={{ padding: "28px 20px 40px", textAlign: "center" }}>
+          <div className="lobby-hero fade-up">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+              <div style={{ textAlign: "left" }}>
+                <p className="timeline-kicker">Room Lobby</p>
+                <h2 className="syne" style={{ fontSize: 30, marginBottom: 8 }}>Weekend control room</h2>
+                <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.5 }}>
+                  Locked plans are already pinned. Fill with bots if you want to stress-test the full loop solo.
+                </p>
+              </div>
+              <div className="lobby-count-chip">{displayPlayers.length}/{MAX_PLAYERS}</div>
+            </div>
+          </div>
           <Dots players={displayPlayers} max={MAX_PLAYERS} />
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 8 }}>
             {displayPlayers.map((p, i) => (
@@ -611,6 +834,8 @@ export default function App() {
           {isHost && !canStart && (<button onClick={fillTestPlayers} style={{ width: "100%", marginTop: 16, padding: 12, borderRadius: 12, background: "var(--redd)", border: "1px solid rgba(248,113,113,0.3)", color: "var(--red)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>🧪 Fill with test players</button>)}
           {isHost && (<button onClick={canStart ? handleStart : undefined} style={{ width: "100%", marginTop: 16, padding: 16, borderRadius: 14, background: canStart ? "var(--gold)" : "var(--s)", border: "none", color: canStart ? "#07070c" : "var(--tm)", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: canStart ? "pointer" : "not-allowed" }}>{canStart ? "Start →" : `Need ${MAX_PLAYERS - displayPlayers.length} more`}</button>)}
           {!isHost && <Waiting message="Waiting for host..." sub="Hang tight" />}
+          <TimelinePanel timelineDays={timelineDays} timelineSource={timelineSource} placeDetailsById={placeDetailsById} />
+          <FeaturedPlacesRail places={FEATURED_PLACES} placeDetailsById={placeDetailsById} />
         </div>
       </div>
     );
@@ -689,7 +914,7 @@ export default function App() {
               <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, background: "var(--bg)" }}>
                 <span style={{ fontSize: 72, marginBottom: 16 }}>{card.emoji}</span>
                 <h3 className="syne" style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>{card.label}</h3>
-                <span style={{ padding: "4px 14px", borderRadius: 100, background: "var(--sh)", color: "var(--td)", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: 1 }}>{card.group === "cuisine" ? "Cuisine" : card.group === "location" ? "Area" : card.group === "type" ? "Type" : card.group}</span>
+                <span style={{ padding: "4px 14px", borderRadius: 100, background: "var(--sh)", color: "var(--td)", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: 1 }}>{card.group === "cuisine" ? "Cuisine" : card.group === "location" ? "Area" : card.group === "type" ? "Type" : card.group === "vibe" ? "Vibe" : card.group}</span>
               </div>
             )} />
           ) : (<div style={{ textAlign: "center", padding: 40 }}><div className="waiting-dots"><span /><span /><span /></div><p style={{ color: "var(--td)", marginTop: 12 }}>Saving picks...</p></div>)}
@@ -714,16 +939,42 @@ export default function App() {
           {(placeCards.length > 0 && placeSwipesLeft > 0) ? (
             <SwipeStack cards={placeCards} onSwipe={handlePlaceSwipe} swipesLeft={placeSwipesLeft} maxSwipes={MAX_PLACE_SWIPES} renderCard={(place) => (
               <div style={{ height: "100%", display: "flex", flexDirection: "column", padding: 24, justifyContent: "space-between", background: "var(--bg)" }}>
-                <div>
-                  <div style={{ width: "100%", height: 150, borderRadius: 14, background: `linear-gradient(135deg, ${cat?.color}22, ${cat?.color}08)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, marginBottom: 16 }}>{place.img}</div>
-                  <h3 className="syne" style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{place.name}</h3>
-                  <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.5, marginBottom: 12 }}>{place.vibe}</p>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--gd)", color: "var(--gold)", fontSize: 14, fontWeight: 700 }}>{"$".repeat(place.cost)}</span>
-                  <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--sh)", color: "var(--td)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Star size={12} /> {place.rating}</span>
-                  {place.tags.map((t) => (<span key={t} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--s)", color: "#aaa", fontSize: 12 }}>{t}</span>))}
-                </div>
+                {(() => {
+                  const details = placeDetailsById[place.id];
+                  const busyness = describeBusyness(details?.currentBusyness);
+                  return (
+                    <>
+                      <div>
+                        <div style={{ width: "100%", height: 170, borderRadius: 16, overflow: "hidden", background: `linear-gradient(135deg, ${cat?.color}22, ${cat?.color}08)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, marginBottom: 16, position: "relative" }}>
+                          {details?.photoUrl ? (
+                            <img
+                              src={details.photoUrl}
+                              alt={place.name}
+                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                            />
+                          ) : (
+                            <span>{place.img}</span>
+                          )}
+                          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(7,7,12,0.05), rgba(7,7,12,0.55))" }} />
+                          <div style={{ position: "absolute", left: 14, top: 14, padding: "6px 10px", borderRadius: 999, background: "rgba(7,7,12,0.68)", backdropFilter: "blur(8px)", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1.2 }}>{cat?.label}</div>
+                        </div>
+                        <h3 className="syne" style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{details?.name || place.name}</h3>
+                        <p style={{ color: "var(--td)", fontSize: 14, lineHeight: 1.5, marginBottom: 10 }}>{details?.editorialSummary || place.vibe}</p>
+                        {details?.formattedAddress && <p style={{ color: "#cfcfcf", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>{details.formattedAddress}</p>}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--gd)", color: "var(--gold)", fontSize: 14, fontWeight: 700 }}>{"$".repeat(details?.priceLevel || place.cost)}</span>
+                        <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--sh)", color: "var(--td)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Star size={12} /> {(details?.rating || place.rating).toFixed(1)}</span>
+                        <span style={{ padding: "6px 12px", borderRadius: 8, background: "var(--s)", color: "#c9c9c9", fontSize: 12 }}>{formatDistance(details?.distanceMeters)}</span>
+                        {busyness && <span style={{ padding: "6px 12px", borderRadius: 8, background: busyness.background, color: busyness.tone, fontSize: 12, fontWeight: 700 }}>{busyness.label}</span>}
+                        {place.displayTags?.map((tag) => (<span key={tag} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--s)", color: "#aaa", fontSize: 12 }}>{tag}</span>))}
+                        {details?.topDishes?.slice(0, 2).map((dish) => (
+                          <span key={dish} style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(255,255,255,0.04)", color: "#d6d6d6", fontSize: 12 }}>{dish}</span>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )} />
           ) : (<div style={{ textAlign: "center", padding: 40 }}><div className="bounce-in" style={{ fontSize: 48, marginBottom: 16 }}>✅</div><p className="syne" style={{ fontSize: 18, fontWeight: 700 }}>{placeSwipesLeft <= 0 ? "All swipes used!" : "Deck cleared!"}</p></div>)}
@@ -744,7 +995,7 @@ export default function App() {
           {testMode && <div className="test-banner">TEST MODE</div>}
           <div className="fade-up" style={{ padding: "32px 20px" }}>
             <div style={{ textAlign: "center", marginBottom: 24 }}><p style={{ color: "var(--gold)", fontSize: 12, fontWeight: 600, letterSpacing: 2, marginBottom: 4 }}>ROUND {room.finalRound}</p><h2 className="syne" style={{ fontSize: 24 }}>{winner ? "We're going to..." : "Not quite — revote! 🔄"}</h2></div>
-            {sorted.map(([id, data]) => { const place = ALL_PLACES.find((p) => p.id === id); const pct = (data.c / room.players.length) * 100;
+            {sorted.map(([id, data]) => { const place = getPlaceById(id); const pct = (data.c / room.players.length) * 100;
               return (<div key={id} style={{ marginBottom: 12 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 14, fontWeight: 600 }}>{place?.img} {place?.name || id}</span><span style={{ fontSize: 13, fontWeight: 700, color: data.c === 5 ? "var(--green)" : "var(--td)" }}>{data.c}/{room.players.length}</span></div><div className="vote-bar"><div className="vote-bar-fill" style={{ width: `${Math.max(pct, 8)}%`, background: data.c === 5 ? "linear-gradient(90deg,var(--green),#22D3EE)" : "var(--sh)", color: data.c === 5 ? "#07070c" : "var(--td)" }}>{data.v.join(", ")}</div></div></div>);
             })}
             {isHost && (<button onClick={handleFinalProceed} style={{ width: "100%", marginTop: 24, padding: 16, borderRadius: 14, background: "var(--gold)", border: "none", color: "#07070c", fontSize: 16, fontWeight: 700, fontFamily: "'Syne',sans-serif", cursor: "pointer" }}>{winner ? "Let's Go! 🎉" : "Revote →"}</button>)}
@@ -762,10 +1013,18 @@ export default function App() {
             <div className="timer-ring" style={{ color: urgent ? "var(--red)" : "var(--t)", animation: urgent ? "timer-pulse .5s infinite" : "none", textShadow: urgent ? "0 0 20px currentColor" : "none" }}>{timerLeft}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-            {room.finalOptions.map((pid) => { const place = ALL_PLACES.find((p) => p.id === pid); if (!place) return null; const isSel = finalSel.includes(pid); const atMax = finalSel.length >= room.finalMaxSelections; const dis = mySubmitted || (!isSel && atMax);
+            {room.finalOptions.map((pid) => { const place = getPlaceById(pid); if (!place) return null; const details = placeDetailsById[pid]; const busyness = describeBusyness(details?.currentBusyness); const isSel = finalSel.includes(pid); const atMax = finalSel.length >= room.finalMaxSelections; const dis = mySubmitted || (!isSel && atMax);
               return (<div key={pid} className={`final-option ${isSel ? "sel" : ""} ${dis && !isSel ? "dis" : ""}`} onClick={() => !dis && toggleFinal(pid)}>
-                <span style={{ fontSize: 28 }}>{place.img}</span>
-                <div style={{ flex: 1 }}><p style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{place.name}</p><p style={{ color: "var(--td)", fontSize: 12 }}>{place.vibe}</p></div>
+                {details?.photoUrl ? (
+                  <img
+                    src={details.photoUrl}
+                    alt={place.name}
+                    style={{ width: 56, height: 56, borderRadius: 16, objectFit: "cover", flexShrink: 0 }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 28 }}>{place.img}</span>
+                )}
+                <div style={{ flex: 1 }}><p style={{ fontWeight: 600, fontSize: 15, marginBottom: 2 }}>{details?.name || place.name}</p><p style={{ color: "var(--td)", fontSize: 12, marginBottom: 6 }}>{details?.editorialSummary || place.vibe}</p><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><span style={{ color: "var(--td)", fontSize: 11 }}>{formatDistance(details?.distanceMeters)}</span>{typeof details?.rating === "number" && <span style={{ color: "var(--td)", fontSize: 11 }}>★ {details.rating.toFixed(1)}</span>}{busyness && <span style={{ color: busyness.tone, fontSize: 11, fontWeight: 700 }}>{busyness.label}</span>}</div></div>
                 {isSel && (<div className="bounce-in" style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center" }}><Check size={16} color="#07070c" /></div>)}
               </div>);
             })}
@@ -780,20 +1039,43 @@ export default function App() {
 
   // DECIDED
   if (room.phase === "decided") {
-    const place = ALL_PLACES.find((p) => p.id === room.decidedPlace); const cat = CATEGORIES.find((c) => c.id === place?.cat);
+    const place = getPlaceById(room.decidedPlace); const details = place ? placeDetailsById[place.id] : null; const busyness = describeBusyness(details?.currentBusyness); const cat = CATEGORIES.find((c) => c.id === place?.cat);
     return (
       <div className="app grain">
         <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, textAlign: "center" }}>
-          <div className="bounce-in" style={{ width: 100, height: 100, borderRadius: "50%", background: "var(--gd)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48, marginBottom: 24, border: "2px solid rgba(240,168,48,0.3)" }}>{place?.img || "🎉"}</div>
+          {details?.photoUrl ? (
+            <div className="bounce-in" style={{ width: "100%", maxWidth: 360, height: 240, borderRadius: 26, overflow: "hidden", marginBottom: 24, position: "relative", border: "1px solid var(--bl)" }}>
+              <img src={details.photoUrl} alt={place?.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(7,7,12,0.05), rgba(7,7,12,0.4))" }} />
+            </div>
+          ) : (
+            <div className="bounce-in" style={{ width: 100, height: 100, borderRadius: "50%", background: "var(--gd)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48, marginBottom: 24, border: "2px solid rgba(240,168,48,0.3)" }}>{place?.img || "🎉"}</div>
+          )}
           <p className="fade-up s1" style={{ color: "var(--gold)", fontSize: 12, fontWeight: 600, letterSpacing: 3, marginBottom: 8 }}>IT'S DECIDED</p>
-          <h1 className="syne fade-up s2" style={{ fontSize: 36, fontWeight: 800, marginBottom: 8 }}>{place?.name}</h1>
-          <p className="fade-up s3" style={{ color: "var(--td)", fontSize: 15, marginBottom: 4 }}>{place?.vibe}</p>
+          <h1 className="syne fade-up s2" style={{ fontSize: 36, fontWeight: 800, marginBottom: 8 }}>{details?.name || place?.name}</h1>
+          <p className="fade-up s3" style={{ color: "var(--td)", fontSize: 15, marginBottom: 4 }}>{details?.editorialSummary || place?.vibe}</p>
+          {details?.formattedAddress && <p className="fade-up s3" style={{ color: "#cfcfcf", fontSize: 13, marginTop: 8 }}>{details.formattedAddress}</p>}
+          {details?.openingHoursSummary && <p className="fade-up s4" style={{ color: "var(--tm)", fontSize: 12, marginTop: 6 }}>{details.openingHoursSummary}</p>}
           <div className="fade-up s4" style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 40 }}>
-            <span style={{ padding: "6px 14px", borderRadius: 8, background: "var(--gd)", color: "var(--gold)", fontSize: 13, fontWeight: 700 }}>{"$".repeat(place?.cost || 1)}</span>
+            <span style={{ padding: "6px 14px", borderRadius: 8, background: "var(--gd)", color: "var(--gold)", fontSize: 13, fontWeight: 700 }}>{"$".repeat(details?.priceLevel || place?.cost || 1)}</span>
             <span style={{ padding: "6px 14px", borderRadius: 8, background: cat ? `${cat.color}22` : "var(--s)", color: cat?.color, fontSize: 13, fontWeight: 600 }}>{cat?.emoji} {cat?.label}</span>
-            {place?.rating && <span style={{ padding: "6px 14px", borderRadius: 8, background: "var(--sh)", color: "var(--td)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Star size={12} /> {place.rating}</span>}
+            {typeof details?.rating === "number" && <span style={{ padding: "6px 14px", borderRadius: 8, background: "var(--sh)", color: "var(--td)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Star size={12} /> {details.rating.toFixed(1)}</span>}
+            {details?.distanceMeters && <span style={{ padding: "6px 14px", borderRadius: 8, background: "var(--s)", color: "#d7d7d7", fontSize: 13 }}>{formatDistance(details.distanceMeters)}</span>}
+            {busyness && <span style={{ padding: "6px 14px", borderRadius: 8, background: busyness.background, color: busyness.tone, fontSize: 13, fontWeight: 700 }}>{busyness.label}</span>}
           </div>
-          <button onClick={handleReset} style={{ padding: "14px 32px", borderRadius: 14, background: "var(--s)", border: "1px solid var(--bl)", color: "var(--t)", fontSize: 14, fontWeight: 600, fontFamily: "'Syne',sans-serif", cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}><RotateCcw size={16} /> New Round</button>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+            {details?.googleMapsUri && (
+              <a
+                href={details.googleMapsUri}
+                target="_blank"
+                rel="noreferrer"
+                style={{ padding: "14px 24px", borderRadius: 14, background: "var(--gold)", color: "#07070c", fontSize: 14, fontWeight: 700, fontFamily: "'Syne',sans-serif", textDecoration: "none" }}
+              >
+                Open In Maps
+              </a>
+            )}
+            <button onClick={handleReset} style={{ padding: "14px 32px", borderRadius: 14, background: "var(--s)", border: "1px solid var(--bl)", color: "var(--t)", fontSize: 14, fontWeight: 600, fontFamily: "'Syne',sans-serif", cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}><RotateCcw size={16} /> New Round</button>
+          </div>
         </div>
       </div>
     );
