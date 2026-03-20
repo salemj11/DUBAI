@@ -10,6 +10,7 @@ import {
   Navigation,
   Plus,
   RotateCcw,
+  Route,
   Sparkles,
   Star,
   Trash2,
@@ -197,6 +198,27 @@ function getPlacePhotoUrls(details) {
   return [];
 }
 
+function buildMapsSearchUrl(query, rawPlaceId) {
+  if (!query) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    api: "1",
+    query,
+  });
+
+  const normalizedPlaceId = typeof rawPlaceId === "string" && rawPlaceId.includes("/")
+    ? rawPlaceId.split("/").pop()
+    : rawPlaceId;
+
+  if (typeof normalizedPlaceId === "string" && normalizedPlaceId.startsWith("ChI")) {
+    params.set("query_place_id", normalizedPlaceId);
+  }
+
+  return `https://www.google.com/maps/search/?${params.toString()}`;
+}
+
 function buildPlaceMapsUrl(place, details) {
   if (typeof details?.googleMapsUri === "string" && details.googleMapsUri) {
     return details.googleMapsUri;
@@ -210,21 +232,147 @@ function buildPlaceMapsUrl(place, details) {
     return null;
   }
 
-  const params = new URLSearchParams({
-    api: "1",
-    query,
-  });
-
   const rawPlaceId = details?.googlePlaceId || place?.googlePlaceId;
-  const normalizedPlaceId = typeof rawPlaceId === "string" && rawPlaceId.includes("/")
-    ? rawPlaceId.split("/").pop()
-    : rawPlaceId;
+  return buildMapsSearchUrl(query, rawPlaceId);
+}
 
-  if (typeof normalizedPlaceId === "string" && normalizedPlaceId.startsWith("ChI")) {
-    params.set("query_place_id", normalizedPlaceId);
+function getPlaceCoordinates(place, details) {
+  const lat = typeof details?.lat === "number" ? details.lat : place?.lat;
+  const lng = typeof details?.lng === "number" ? details.lng : place?.lng;
+
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    return null;
   }
 
-  return `https://www.google.com/maps/search/?${params.toString()}`;
+  return { lat, lng };
+}
+
+function haversineDistanceMeters(start, end) {
+  if (!start || !end) return 0;
+
+  const earthRadiusMeters = 6_371_000;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const latitudeDelta = toRadians(end.lat - start.lat);
+  const longitudeDelta = toRadians(end.lng - start.lng);
+  const startLatitude = toRadians(start.lat);
+  const endLatitude = toRadians(end.lat);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatRouteDistance(distanceMeters) {
+  if (!distanceMeters) return "0 km";
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`;
+  if (distanceMeters < 10_000) return `${(distanceMeters / 1000).toFixed(1)} km`;
+  return `${Math.round(distanceMeters / 1000)} km`;
+}
+
+function projectJourneyPoints(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return [];
+  }
+
+  const latitudes = points.map((point) => point.coords.lat);
+  const longitudes = points.map((point) => point.coords.lng);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  const latitudeSpan = Math.max(maxLatitude - minLatitude, 0.02);
+  const longitudeSpan = Math.max(maxLongitude - minLongitude, 0.02);
+  const paddedMinLatitude = minLatitude - latitudeSpan * 0.18;
+  const paddedMaxLatitude = maxLatitude + latitudeSpan * 0.18;
+  const paddedMinLongitude = minLongitude - longitudeSpan * 0.18;
+  const paddedMaxLongitude = maxLongitude + longitudeSpan * 0.18;
+  const safeLatitudeSpan = paddedMaxLatitude - paddedMinLatitude;
+  const safeLongitudeSpan = paddedMaxLongitude - paddedMinLongitude;
+
+  return points.map((point) => ({
+    ...point,
+    x: 12 + ((point.coords.lng - paddedMinLongitude) / safeLongitudeSpan) * 76,
+    y: 14 + ((paddedMaxLatitude - point.coords.lat) / safeLatitudeSpan) * 72,
+  }));
+}
+
+function buildJourneyDay(day, placeDetailsById) {
+  const origin = {
+    id: `origin-${day.day}`,
+    title: "FIVE Palm Jumeirah",
+    area: "Palm Jumeirah",
+    emoji: "🏁",
+    timeLabel: "Start",
+    coords: DEFAULT_USER_LOCATION,
+    mapsUrl: buildMapsSearchUrl("FIVE Palm Jumeirah Dubai"),
+  };
+
+  let previousCoords = DEFAULT_USER_LOCATION;
+  let totalDistanceMeters = 0;
+  let pinnedStopCount = 0;
+
+  const stops = day.events
+    .filter((event) => event.status !== "cancelled")
+    .map((event, index) => {
+      const place = event.place || getPlaceById(event.placeId || event.place_id);
+      const details = place ? placeDetailsById[place.id] : null;
+      const coords = getPlaceCoordinates(place, details);
+      const legDistanceMeters = coords ? haversineDistanceMeters(previousCoords, coords) : null;
+
+      if (coords) {
+        previousCoords = coords;
+        totalDistanceMeters += legDistanceMeters ?? 0;
+        pinnedStopCount += 1;
+      }
+
+      return {
+        id: event.externalKey || event.id || `journey-stop-${index}`,
+        sequence: index + 1,
+        title: event.title,
+        area: details?.formattedAddress || place?.area || "Dubai",
+        timeLabel: formatTimelineTime(event.startTime),
+        tone: getTimelineTone(event),
+        coords,
+        legDistanceMeters,
+        place,
+        details,
+        mapsUrl: place ? buildPlaceMapsUrl(place, details) : null,
+        emoji: place?.emoji || "📍",
+      };
+    });
+
+  const plottedPoints = projectJourneyPoints([
+    {
+      id: origin.id,
+      sequence: 0,
+      title: origin.title,
+      label: "Start",
+      emoji: origin.emoji,
+      coords: origin.coords,
+      tone: { background: "var(--gd)", color: "var(--gold)" },
+      isOrigin: true,
+    },
+    ...stops
+      .filter((stop) => stop.coords)
+      .map((stop) => ({
+        id: stop.id,
+        sequence: stop.sequence,
+        title: stop.title,
+        label: stop.timeLabel,
+        emoji: stop.emoji,
+        coords: stop.coords,
+        tone: stop.tone,
+        isOrigin: false,
+      })),
+  ]);
+
+  return {
+    origin,
+    stops,
+    plottedPoints,
+    totalDistanceMeters,
+    pinnedStopCount,
+  };
 }
 
 function PlacePhotoCarousel({
@@ -616,6 +764,222 @@ function MenuActionCard({ icon, title, copy, meta, onClick, accent, badge }) {
       </div>
       <p className="menu-action-meta">{meta}</p>
     </button>
+  );
+}
+
+function JourneyWorkspace({
+  day,
+  timelineSource,
+  placeDetailsById,
+  onBack,
+  onPrevDay,
+  onNextDay,
+}) {
+  const journey = buildJourneyDay(day, placeDetailsById);
+  const plottedPoints = journey.plottedPoints;
+  const segments = plottedPoints.slice(1).map((point, index) => ({
+    id: `${plottedPoints[index].id}-${point.id}`,
+    from: plottedPoints[index],
+    to: point,
+  }));
+
+  return (
+    <div className="app grain">
+      <div style={{ padding: "22px 20px 56px" }}>
+        <div className="timeline-workspace-header fade-up">
+          <button type="button" className="ghost-chip" onClick={onBack}>
+            <ChevronLeft size={16} />
+            Menu
+          </button>
+          <span className={`timeline-source ${timelineSource === "live" || timelineSource === "hybrid" ? "live" : "fallback"}`}>
+            {timelineSource === "live" ? "LIVE" : timelineSource === "hybrid" ? "SYNC" : "LOCAL"}
+          </span>
+        </div>
+
+        <div className="timeline-navigator fade-up s1">
+          <button type="button" className="timeline-nav-btn" onClick={onPrevDay}>
+            <ChevronLeft size={18} />
+          </button>
+          <div style={{ textAlign: "center" }}>
+            <p className="timeline-kicker">Our Journey</p>
+            <h2 className="syne" style={{ fontSize: 28 }}>{day.shortLabel}</h2>
+            <p style={{ color: "var(--td)", fontSize: 13, marginTop: 4 }}>{day.label}</p>
+          </div>
+          <button type="button" className="timeline-nav-btn" onClick={onNextDay}>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        <div className="journey-summary-card fade-up s2">
+          <div>
+            <p className="timeline-kicker">Route View</p>
+            <h3 className="syne" style={{ fontSize: 22, marginBottom: 6 }}>From FIVE Palm through the plan</h3>
+            <p className="journey-summary-copy">
+              Locked and confirmed plans anchor the path. Pending timeline adds stay on the route until they confirm or auto-cancel.
+            </p>
+          </div>
+          <div className="journey-stat-row">
+            <div className="journey-stat-pill">
+              <Navigation size={14} />
+              <span>{journey.stops.length} stop{journey.stops.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="journey-stat-pill">
+              <Route size={14} />
+              <span>{formatRouteDistance(journey.totalDistanceMeters)} traced</span>
+            </div>
+            <div className="journey-stat-pill">
+              <MapPin size={14} />
+              <span>{journey.pinnedStopCount}/{journey.stops.length} pinned</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="journey-map-shell fade-up s3">
+          <div className="journey-map-stage">
+            <div className="journey-map-header">
+              <div>
+                <p className="journey-map-kicker">Starting point</p>
+                <p className="journey-map-origin">FIVE Palm Jumeirah</p>
+              </div>
+              <a
+                href={journey.origin.mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="journey-map-link"
+              >
+                Open start in Maps
+              </a>
+            </div>
+
+            <div className="journey-map-board">
+              <div className="journey-map-grid" />
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className="journey-route-svg"
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient id="journey-route-gradient" x1="0%" x2="100%" y1="0%" y2="100%">
+                    <stop offset="0%" stopColor="#F0A830" />
+                    <stop offset="52%" stopColor="#3ECFCF" />
+                    <stop offset="100%" stopColor="#C76BFF" />
+                  </linearGradient>
+                  <marker id="journey-route-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                    <path d="M0,0 L6,3 L0,6 Z" fill="#3ECFCF" />
+                  </marker>
+                </defs>
+                {segments.map((segment) => (
+                  <line
+                    key={segment.id}
+                    x1={segment.from.x}
+                    y1={segment.from.y}
+                    x2={segment.to.x}
+                    y2={segment.to.y}
+                    stroke="url(#journey-route-gradient)"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeDasharray={segment.to.tone.label === "PENDING" ? "5 4" : undefined}
+                    markerEnd="url(#journey-route-arrow)"
+                    opacity={0.88}
+                  />
+                ))}
+              </svg>
+
+              {plottedPoints.map((point) => (
+                <div
+                  key={point.id}
+                  className={`journey-pin ${point.isOrigin ? "origin" : ""}`}
+                  style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                >
+                  <div
+                    className={`journey-pin-node ${point.isOrigin ? "origin" : ""}`}
+                    style={!point.isOrigin ? { background: point.tone.background, color: point.tone.color } : undefined}
+                  >
+                    {point.isOrigin ? point.emoji : point.sequence}
+                  </div>
+                  <span className="journey-pin-label">
+                    {point.isOrigin ? "START" : point.label}
+                  </span>
+                </div>
+              ))}
+
+              {journey.stops.length === 0 && (
+                <div className="journey-map-empty">
+                  <p className="syne" style={{ fontSize: 22, marginBottom: 8 }}>Nothing plotted yet</p>
+                  <p style={{ color: "#d2d2d2", fontSize: 13, lineHeight: 1.6 }}>
+                    Add a few timeline events and this route view will connect them from FIVE Palm automatically.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="journey-stop-list fade-up s4">
+          <div className="journey-stop-card origin">
+            <div className="journey-stop-index origin">S</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="journey-stop-topline">
+                <p className="journey-stop-title">FIVE Palm Jumeirah</p>
+                <span className="timeline-source live">HOME BASE</span>
+              </div>
+              <p className="journey-stop-meta">Palm Jumeirah · default trip origin</p>
+            </div>
+          </div>
+
+          {journey.stops.length > 0 ? journey.stops.map((stop) => (
+            <div key={stop.id} className="journey-stop-card">
+              <div className="journey-stop-index">{stop.sequence}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="journey-stop-topline">
+                  <p className="journey-stop-title">{stop.title}</p>
+                  <span
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      background: stop.tone.background,
+                      color: stop.tone.color,
+                      fontSize: 11,
+                      fontWeight: 800,
+                      letterSpacing: 1,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {stop.tone.label}
+                  </span>
+                </div>
+                <p className="journey-stop-meta">
+                  {stop.timeLabel} · {stop.area}
+                </p>
+                <p className="journey-stop-meta">
+                  {stop.legDistanceMeters
+                    ? `${formatRouteDistance(stop.legDistanceMeters)} from previous stop`
+                    : "Still waiting on map coordinates for this stop"}
+                </p>
+                {stop.place && (
+                  <div style={{ marginTop: 12 }}>
+                    <PlaceDetailChips place={stop.place} details={stop.details} compact />
+                  </div>
+                )}
+              </div>
+              {stop.mapsUrl && (
+                <a
+                  href={stop.mapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="journey-stop-link"
+                >
+                  Maps
+                </a>
+              )}
+            </div>
+          )) : (
+            <div className="timeline-empty">No timeline stops on this day yet.</div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1528,6 +1892,7 @@ export default function App() {
   const isHost = hostName === me;
   const isActivePlayer = room.phase === "lobby" || room.players.includes(me);
   const pendingTimelineCount = mergedTimelineEvents.filter((event) => !event.locked && event.status === "pending").length;
+  const journeyEventCount = mergedTimelineEvents.filter((event) => event.status !== "cancelled").length;
 
   const showNotice = useCallback((nextNotice) => {
     if (noticeTimerRef.current) {
@@ -2931,6 +3296,33 @@ export default function App() {
     );
   }
 
+  if (room.phase === "lobby" && activePanel === "journey") {
+    return (
+      <>
+        <NoticeBanner
+          notice={notice}
+          onClick={() => {
+            if (notice?.eventId) {
+              jumpToTimelineEvent(notice.eventId);
+            }
+          }}
+          onClose={() => setNotice(null)}
+        />
+        <JourneyWorkspace
+          day={timelineDay}
+          timelineSource={timelineSourceLabel}
+          placeDetailsById={placeDetailsById}
+          onBack={() => {
+            setActivePanel("menu");
+            setUnreadTimelineCount(0);
+          }}
+          onPrevDay={() => setTimelineDayIndex((current) => Math.max(0, current - 1))}
+          onNextDay={() => setTimelineDayIndex((current) => Math.min(timelineDays.length - 1, current + 1))}
+        />
+      </>
+    );
+  }
+
   if (room.phase === "lobby" && activePanel === "places") {
     return (
       <>
@@ -3102,6 +3494,18 @@ export default function App() {
               meta={`${allBrowseablePlaces.length} visible places · shared deck`}
               accent="var(--purple)"
               onClick={() => setActivePanel("places")}
+            />
+            <MenuActionCard
+              icon={<Route size={22} />}
+              title="Our journey"
+              copy="See the route from FIVE Palm through the current timeline, day by day, with a clean trip map and ordered stops."
+              meta={`${journeyEventCount} active stops · route starts at FIVE Palm`}
+              badge={journeyEventCount > 0 ? `${journeyEventCount} stops` : null}
+              accent="var(--green)"
+              onClick={() => {
+                setActivePanel("journey");
+                setUnreadTimelineCount(0);
+              }}
             />
           </div>
 
